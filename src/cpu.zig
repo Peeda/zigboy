@@ -23,18 +23,36 @@ pub const CPU = struct {
                 }
             },
             2 => {
-                switch (y) {
-                    0 => {
-                        self.flags().n = false;
-                        const to_add = self.table_r8(z).*;
-                        const result = self.regs.a +% to_add;
-                        self.flags().z = result == 0;
-                        self.flags().c = result < self.regs.a;
-                        self.flags().h = (self.regs.a & 0x0f) + (to_add & 0x0f) > 0x0f;
-                        self.regs.a = result;
-                    },
-                    else => @panic("todo"),
-                }
+                //8 bit arithmetic between registers
+                const AluOp = enum {
+                    ADD, ADC, SUB, SBC, AND, XOR, OR, CP,
+                };
+                var arg = self.table_r8(z).*;
+                const op:AluOp = @enumFromInt(y);
+                if ((op == .ADC or op == .SBC) and self.flags().c) arg +%= 1;
+                const result = switch (op) {
+                    .ADD, .ADC => self.regs.a +% arg,
+                    .SUB, .SBC, .CP => self.regs.a -% arg,
+                    .AND => self.regs.a & arg,
+                    .XOR => self.regs.a ^ arg,
+                    .OR => self.regs.a | arg,
+                };
+                self.flags().z = result == 0;
+                self.flags().n = switch (op) {
+                    .SUB, .SBC, .CP  => true,
+                    else => false,
+                };
+                self.flags().h = switch (op) {
+                    .ADD, .ADC => (self.regs.a & 0xf) + (arg & 0xf) > 0xf,
+                    .SUB, .SBC, .CP => (self.regs.a & 0xf) < (arg & 0xf),
+                    .AND, .OR, .XOR => false,
+                };
+                self.flags().c = switch (op) {
+                    .ADD, .ADC => result < self.regs.a,
+                    .SUB, .SBC, .CP => result > self.regs.a,
+                    .AND, .OR, .XOR => false,
+                };
+                if (op != .CP) self.regs.a = result;
             },
             3 => @panic("todo"),
         }
