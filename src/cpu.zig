@@ -1,3 +1,4 @@
+//TODO: error handling with illegal opcodes
 const std = @import("std");
 pub const CPU = struct {
     regs: Registers = Registers {},
@@ -13,7 +14,7 @@ pub const CPU = struct {
         const z: u3 = @intCast((opcode & 0b00000111));
         const q: u1 = @intCast(y & 1);
         const p: u2 = @intCast(y >> 1);
-        const use_alt_clock = false;
+        var use_alt_clock = false;
         switch (x) {
             0 => switch (z) {
                 0 => switch (y) {
@@ -32,18 +33,12 @@ pub const CPU = struct {
                         if (disp < 128) {
                             self.pc +%= disp;
                         } else {
-                            self.pc -%= 255 - disp + 1;
+                            self.pc -%= (255 - disp) +% 1;
                         }
                     },
                     4...7 => {
                         const disp = self.consume_byte();
-                        const cond = switch (y - 4) {
-                            0 => !self.flags().z,
-                            1 => self.flags().z,
-                            2 => !self.flags().c,
-                            3 => self.flags().c,
-                            else => unreachable,
-                        };
+                        const cond = self.table_cond(@intCast(y - 4), &use_alt_clock);
                         if (cond) {
                             if (disp < 128) {
                                 self.pc +%= disp;
@@ -161,39 +156,98 @@ pub const CPU = struct {
                     self.table_r8(y).* = self.table_r8(z).*;
                 }
             },
-            2 => {
-                //8 bit arithmetic between registers
-                const AluOp = enum {
-                    ADD, ADC, SUB, SBC, AND, XOR, OR, CP,
-                };
-                var arg = self.table_r8(z).*;
-                const op:AluOp = @enumFromInt(y);
-                if ((op == .ADC or op == .SBC) and self.flags().c) arg +%= 1;
-                const result = switch (op) {
-                    .ADD, .ADC => self.regs.a +% arg,
-                    .SUB, .SBC, .CP => self.regs.a -% arg,
-                    .AND => self.regs.a & arg,
-                    .XOR => self.regs.a ^ arg,
-                    .OR => self.regs.a | arg,
-                };
-                self.flags().z = result == 0;
-                self.flags().n = switch (op) {
-                    .SUB, .SBC, .CP  => true,
-                    else => false,
-                };
-                self.flags().h = switch (op) {
-                    .ADD, .ADC => (self.regs.a & 0xf) + (arg & 0xf) > 0xf,
-                    .SUB, .SBC, .CP => (self.regs.a & 0xf) < (arg & 0xf),
-                    .AND, .OR, .XOR => false,
-                };
-                self.flags().c = switch (op) {
-                    .ADD, .ADC => result < self.regs.a,
-                    .SUB, .SBC, .CP => result > self.regs.a,
-                    .AND, .OR, .XOR => false,
-                };
-                if (op != .CP) self.regs.a = result;
-            },
-            3 => @panic("todo"),
+            2 => self.alu_8(y, self.table_r8(z).*),
+            3 => {
+                switch (z) {
+                    0 => {
+                        switch (y) {
+                            0...3 => if (self.table_cond(@intCast(y), &use_alt_clock)) {self.pc = self.pop_16();},
+                            4 => self.write(0xff00 + @as(u16, self.consume_byte()), self.regs.a),
+                            5 => {
+                                //TODO: check this flag behavior, signed add to unsigned but still carry flags
+                                //also blocks 5 and 7 here are the same thing, maybe put in function
+                                const disp = self.consume_byte();
+                                self.flags().z = false;
+                                self.flags().n = false;
+                                if (disp < 128) {
+                                    const low_byte:u8 = @intCast(self.sp >> 8);
+                                    self.flags().h = (low_byte & 0xf) + (disp & 0xf) > 0xf;
+                                    self.flags().c = low_byte +% disp < low_byte;
+                                    self.sp +%= disp;
+                                } else {
+                                    self.sp -%= (255 - disp) +% 1;
+                                }
+                            },
+                            6 => self.regs.a = self.read(0xff00 + @as(u16, self.consume_byte())),
+                            7 => {
+                                const disp = self.consume_byte();
+                                self.flags().z = false;
+                                self.flags().n = false;
+                                if (disp < 128) {
+                                    const low_byte:u8 = @intCast(self.sp >> 8);
+                                    self.flags().h = (low_byte & 0xf) + (disp & 0xf) > 0xf;
+                                    self.flags().c = low_byte +% disp < low_byte;
+                                    self.regs_16().hl = self.sp +% disp;
+                                } else {
+                                    self.regs_16().hl = self.sp -% (255 - disp) +% 1;
+                                }
+                            },
+                        }
+                    },
+                    1 => {
+                        switch (q) {
+                            0 => self.table_rp2(p).* = self.pop_16(),
+                            1 => switch (p) {
+                                0 => self.pc = self.pop_16(),
+                                1 => @panic("TODO: RETI"),
+                                2 => self.pc = self.regs_16().hl,
+                                3 => self.sp = self.regs_16().hl,
+                            },
+                        }
+                    },
+                    2 => {
+                        switch (y) {
+                            0...3 => {
+                                const addr = self.consume_16();
+                                if (self.table_cond(@intCast(y), &use_alt_clock)) {
+                                    self.pc = addr;
+                                }
+                            },
+                            4 => self.write(0xff00 + @as(u16, self.regs.c), self.regs.a),
+                            5 => self.write(self.consume_16(), self.regs.a),
+                            6 => self.regs.a = self.read(0xff00 + @as(u16, self.regs.c)),
+                            7 => self.regs.a = self.read(self.consume_16()),
+                        }
+                    },
+                    3 => {
+                        switch (y) {
+                            0 => self.pc = self.consume_16(),
+                            1 => @panic("TODO: CB"),
+                            2...5 => @panic("Illegal Opcode"),
+                            6 => @panic("TODO: DI"),
+                            7 => @panic("TODO: EI"),
+                        }
+                    },
+                    4 => {
+                        if (y >= 4) @panic("Illegal Opcode");
+                        const cond = self.table_cond(@intCast(y), &use_alt_clock);
+                        const addr = self.consume_16();
+                        if (cond) self.call(addr);
+                    },
+                    5 => {
+                        switch (q) {
+                            0 => self.push_16(self.table_rp2(p).*),
+                            1 => {
+                                if (p != 0) @panic("Illegal Opcode");
+                                const addr = self.consume_16();
+                                self.call(addr);
+                            }
+                        }
+                    },
+                    6 => self.alu_8(y, self.consume_byte()),
+                    7 => self.call(@as(u16, y) * 8),
+                }
+            }
         }
         //don't use the alt table if this opcode doesn't have an alternative clock len
         std.debug.assert(!(use_alt_clock and ALT_CLOCK[@intCast(opcode)] == 0));
@@ -227,6 +281,17 @@ pub const CPU = struct {
             3 => &self.regs_16().af,
         };
     }
+    //have this function mutate the variable that determines clock vs alt clock cycles
+    fn table_cond(self: *CPU, cond: u2, alt_clock: *bool) bool {
+        const result = switch (cond) {
+            0 => !self.flags().z,
+            1 => self.flags().z,
+            2 => !self.flags().c,
+            3 => self.flags().c,
+        };
+        alt_clock.* = result;
+        return result;
+    }
     fn regs_16(self: *CPU) *Registers16 {
         return @ptrCast(&self.regs);
     }
@@ -250,7 +315,7 @@ pub const CPU = struct {
         @panic("todo");
     }
     fn consume_byte(self: *CPU) u8 {
-        self.pc += 1;
+        self.pc +%= 1;
         return self.read(self.pc - 1);
     }
     fn consume_16(self: *CPU) u16 {
@@ -263,6 +328,55 @@ pub const CPU = struct {
         self.flags().n = n;
         self.flags().h = h;
         self.flags().c = c;
+    }
+    fn push_16(self: *CPU, val: u16) void {
+        self.sp -%= 1;
+        self.write(self.sp, @intCast(val >> 8));
+        self.sp -%= 1;
+        self.write(self.sp, @intCast(val & 0xf));
+    }
+    fn pop_16(self: *CPU) u16 {
+        const low_byte:u16 = @intCast(self.read(self.sp));
+        self.sp +%= 1;
+        const hi_byte:u16 = @intCast(self.read(self.sp));
+        self.sp +%= 1;
+        return low_byte | (hi_byte << 8);
+    }
+    fn call(self: *CPU, addr: u16) void {
+        self.push_16(self.pc);
+        self.pc = addr;
+    }
+    fn alu_8(self: *CPU, op_id: u3, arg_original: u8) void {
+        //8 bit arithmetic between registers
+        const AluOp = enum {
+            ADD, ADC, SUB, SBC, AND, XOR, OR, CP,
+        };
+        const op:AluOp = @enumFromInt(op_id);
+        var arg = arg_original;
+        if ((op == .ADC or op == .SBC) and self.flags().c) arg +%= 1;
+        const result = switch (op) {
+            .ADD, .ADC => self.regs.a +% arg,
+            .SUB, .SBC, .CP => self.regs.a -% arg,
+            .AND => self.regs.a & arg,
+            .XOR => self.regs.a ^ arg,
+            .OR => self.regs.a | arg,
+        };
+        self.flags().z = result == 0;
+        self.flags().n = switch (op) {
+            .SUB, .SBC, .CP  => true,
+            .ADD, .ADC, .AND, .XOR, .OR => false,
+        };
+        self.flags().h = switch (op) {
+            .ADD, .ADC => (self.regs.a & 0xf) + (arg & 0xf) > 0xf,
+            .SUB, .SBC, .CP => (self.regs.a & 0xf) < (arg & 0xf),
+            .AND, .OR, .XOR => false,
+        };
+        self.flags().c = switch (op) {
+            .ADD, .ADC => result < self.regs.a,
+            .SUB, .SBC, .CP => result > self.regs.a,
+            .AND, .OR, .XOR => false,
+        };
+        if (op != .CP) self.regs.a = result;
     }
 };
 const Registers = packed struct {
