@@ -3,9 +3,7 @@ pub const CPU = struct {
     regs: Registers = Registers {},
     sp:u16 = 0xFFFE, pc:u16 = 0x0100,
     pub fn step(self: *CPU) u8 {
-        const opcode = self.read(self.PC);
-        self.pc += 1;
-        return self.execute(opcode);
+        return self.execute(self.consume_byte());
     }
     //does one instruction, returns number of clocks
     pub fn execute(self: *CPU, opcode: u8) u8 {
@@ -13,8 +11,149 @@ pub const CPU = struct {
         const x: u2 = @intCast((opcode & 0b11000000) >> 6);
         const y: u3 = @intCast((opcode & 0b00111000) >> 3);
         const z: u3 = @intCast((opcode & 0b00000111));
+        const q: u1 = @intCast(y & 1);
+        const p: u2 = @intCast(y >> 1);
+        const use_alt_clock = false;
         switch (x) {
-            0 => @panic("todo"),
+            0 => switch (z) {
+                0 => switch (y) {
+                    0 => {},
+                    1 => {
+                        //TODO: move this into a function
+                        //write sp to memory
+                        const addr = self.consume_16();
+                        self.write(addr, @as(u8, @intCast(self.sp & 0x0f)));
+                        self.write(addr + 1, @as(u8, @intCast(self.sp >> 8)));
+                    },
+                    2 => @panic("TODO, stop instruction"),
+                    3 => {
+                        //relative jump
+                        const disp = self.consume_byte();
+                        if (disp < 128) {
+                            self.pc +%= disp;
+                        } else {
+                            self.pc -%= 255 - disp + 1;
+                        }
+                    },
+                    4...7 => {
+                        const disp = self.consume_byte();
+                        const cond = switch (y - 4) {
+                            0 => !self.flags().z,
+                            1 => self.flags().z,
+                            2 => !self.flags().c,
+                            3 => self.flags().c,
+                            else => unreachable,
+                        };
+                        if (cond) {
+                            if (disp < 128) {
+                                self.pc +%= disp;
+                            } else {
+                                self.pc -%= 255 - disp + 1;
+                            }
+                        }
+                    }
+                },
+                1 => {
+                    switch (q) {
+                        0 => {
+                            const imm = self.consume_16();
+                            self.table_rp(p).* = imm;
+                        },
+                        1 => {
+                            const to_add = self.table_rp(p).*;
+                            const result = self.regs_16().hl +% to_add;
+                            self.flags().n = false;
+                            self.flags().h = (self.regs_16().hl & 0x0fff) + (to_add & 0x0fff) > 0x0fff;
+                            self.flags().c = result < self.regs_16().hl;
+                            self.regs_16().hl = result;
+                        }
+                    }
+                },
+                2 => {
+                    switch (q) {
+                        0 => {
+                            switch (p) {
+                                0 => self.write(self.regs_16().bc, self.regs.a),
+                                1 => self.write(self.regs_16().de, self.regs.a),
+                                2 => {self.write(self.regs_16().hl, self.regs.a); self.regs_16().hl +%= 1;},
+                                3 => {self.write(self.regs_16().hl, self.regs.a); self.regs_16().hl -%= 1;},
+                            }
+                        },
+                        1 => {
+                            switch (p) {
+                                0 => self.regs.a = self.read(self.regs_16().bc),
+                                1 => self.regs.a = self.read(self.regs_16().de),
+                                2 => {self.regs.a = self.read(self.regs_16().hl); self.regs_16().hl +%= 1; },
+                                3 => {self.regs.a = self.read(self.regs_16().hl); self.regs_16().hl -%= 1; },
+                            }
+                        },
+                    }
+                },
+                3 => {
+                    switch (q) {
+                        0 => self.table_rp(p).* +%= 1,
+                        1 => self.table_rp(p).* -%= 1,
+                    }
+                },
+                4 => {
+                    self.flags().z = self.table_r8(y).* +% 1 == 0;
+                    self.flags().n = false;
+                    self.flags().h = (self.table_r8(y).* & 0xf) == 0x0f;
+                    self.table_r8(y).* +%= 1;
+                },
+                5 => {
+                    self.flags().z = self.table_r8(y).* == 1;
+                    self.flags().n = true;
+                    self.flags().h = (self.table_r8(y).* & 0x0f) == 0;
+                },
+                6 => self.table_r8(y).* = self.consume_byte(),
+                7 => {
+                    switch (y) {
+                        0 => {
+                            const top_set = (self.regs.a & (1 << 7)) > 0;
+                            self.set_flags(false, false, false, top_set);
+                            self.regs.a <<= 1;
+                            if (top_set) self.regs.a |= 1;
+                        },
+                        1 => {
+                            const bottom_set = (self.regs.a & 1) > 0;
+                            self.set_flags(false, false, false, bottom_set);
+                            self.regs.a >>= 1;
+                            if (bottom_set) self.regs.a |= (1 << 7);
+                        },
+                        2 => {
+                            const prev_c = self.flags().c;
+                            const top_set = (self.regs.a & (1 << 7)) > 0;
+                            self.regs.a <<= 1;
+                            self.set_flags(false, false, false, top_set);
+                            if (prev_c) self.regs.a |= 1;
+                        },
+                        3 => {
+                            const prev_c = self.flags().c;
+                            const bottom_set = (self.regs.a & 1) > 0;
+                            self.regs.a >>= 1;
+                            self.set_flags(false, false, false, bottom_set);
+                            if (prev_c) self.regs.a |= (1 << 7);
+                        },
+                        4 => @panic("todo, DAA"),
+                        5 => {
+                            self.regs.a = ~self.regs.a;
+                            self.flags().n = false;
+                            self.flags().h = false;
+                        },
+                        6 => {
+                            self.flags().n = false;
+                            self.flags().h = false;
+                            self.flags().c = true;
+                        },
+                        7 => {
+                            self.flags().n = false;
+                            self.flags().h = false;
+                            self.flags().c = !self.flags().c;
+                        },
+                    }
+                },
+            },
             1 => {
                 if (y == 6 and z == 6) {
                     @panic("halt instruction todo");
@@ -56,8 +195,9 @@ pub const CPU = struct {
             },
             3 => @panic("todo"),
         }
-        //TODO: remove this.
-        return 0;
+        //don't use the alt table if this opcode doesn't have an alternative clock len
+        std.debug.assert(!(use_alt_clock and ALT_CLOCK[@intCast(opcode)] == 0));
+        return if (use_alt_clock) ALT_CLOCK[@intCast(opcode)] else CLOCK[@intCast(opcode)];
     }
     fn table_r8(self: *CPU, id: u3) *u8 {
         return switch (id) {
@@ -71,6 +211,22 @@ pub const CPU = struct {
             7 => &self.regs.a,
         };
     }
+    fn table_rp(self: *CPU, id: u2) *u16 {
+        return switch (id) {
+            0 => &self.regs_16().bc,
+            1 => &self.regs_16().de,
+            2 => &self.regs_16().hl,
+            3 => &self.sp,
+        };
+    }
+    fn table_rp2(self: *CPU, id: u2) *u16 {
+        return switch (id) {
+            0 => &self.regs_16().bc,
+            1 => &self.regs_16().de,
+            2 => &self.regs_16().hl,
+            3 => &self.regs_16().af,
+        };
+    }
     fn regs_16(self: *CPU) *Registers16 {
         return @ptrCast(&self.regs);
     }
@@ -82,14 +238,31 @@ pub const CPU = struct {
         _ = addr;
         @panic("todo");
     }
-    fn read(addr: u16) u8 {
+    fn read(self: *CPU, addr: u16) u8 {
         _ = addr;
+        _ = self;
         @panic("todo");
     }
-    fn write(addr: u16, val: u8) void {
+    fn write(self: *CPU, addr: u16, val: u8) void {
         _ = addr;
         _ = val;
+        _ = self;
         @panic("todo");
+    }
+    fn consume_byte(self: *CPU) u8 {
+        self.pc += 1;
+        return self.read(self.pc - 1);
+    }
+    fn consume_16(self: *CPU) u16 {
+        const low:u16 = @intCast(self.consume_byte());
+        const high:u16 = @intCast(self.consume_byte());
+        return ((high << 8) | low);
+    }
+    fn set_flags(self: *CPU, z: bool, n: bool, h:bool, c:bool) void {
+        self.flags().z = z;
+        self.flags().n = n;
+        self.flags().h = h;
+        self.flags().c = c;
     }
 };
 const Registers = packed struct {
@@ -144,3 +317,39 @@ test "add_flags" {
     try testing.expect(cpu.regs.f & (1 << 5) > 0);
     try testing.expect(cpu.regs.f & (1 << 4) > 0);
 }
+const CLOCK = [_]u8 {
+ 4, 12,  8,  8,  4,  4,  8,  4, 20,  8,  8,  8,  4,  4,  8,  4, 
+ 4, 12,  8,  8,  4,  4,  8,  4, 12,  8,  8,  8,  4,  4,  8,  4, 
+ 8, 12,  8,  8,  4,  4,  8,  4,  8,  8,  8,  8,  4,  4,  8,  4, 
+ 8, 12,  8,  8, 12, 12, 12,  4,  8,  8,  8,  8,  4,  4,  8,  4, 
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
+ 8,  8,  8,  8,  8,  8,  4,  8,  4,  4,  4,  4,  4,  4,  8,  4, 
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
+ 8, 12, 12, 16, 12, 16,  8, 16,  8, 16, 12,  4, 12, 24,  8, 16, 
+ 8, 12, 12,  4, 12, 16,  8, 16,  8, 16, 12,  4, 12,  4,  8, 16, 
+12, 12,  8,  4,  4, 16,  8, 16, 16,  4, 16,  4,  4,  4,  8, 16, 
+12, 12,  8,  4,  4, 16,  8, 16, 12,  8, 16,  4,  4,  4,  8, 16, 
+};
+pub const ALT_CLOCK = [_]u8 {
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+12,  0,  0,  0,  0,  0,  0,  0, 12,  0,  0,  0,  0,  0,  0,  0, 
+12,  0,  0,  0,  0,  0,  0,  0, 12,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+20,  0, 16,  0, 24,  0,  0,  0, 20,  0, 16,  0, 24,  0,  0,  0, 
+20,  0, 16,  0, 24,  0,  0,  0, 20,  0, 16,  0, 24,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+};
