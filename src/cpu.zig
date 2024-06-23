@@ -2,9 +2,14 @@
 const std = @import("std");
 pub const CPU = struct {
     regs: Registers = Registers {},
-    sp:u16 = 0xFFFE, pc:u16 = 0x0100,
+    sp:u16 = 0xFFFE, pc:u16 = 0x0100, ime:bool = false, 
+    //was an ie operation executed last step
+    ie_next:bool = false,
     pub fn step(self: *CPU) u8 {
-        return self.execute(self.consume_byte());
+        var clocks_taken = 0;
+        clocks_taken += self.execute(self.consume_byte());
+        //handle interrupts
+        return clocks_taken;
     }
     //does one instruction, returns number of clocks
     pub fn execute(self: *CPU, opcode: u8) u8 {
@@ -199,7 +204,7 @@ pub const CPU = struct {
                             0 => self.table_rp2(p).* = self.pop_16(),
                             1 => switch (p) {
                                 0 => self.pc = self.pop_16(),
-                                1 => @panic("TODO: RETI"),
+                                1 => {self.pc = self.pop_16(); self.ime = true; },
                                 2 => self.pc = self.regs_16().hl,
                                 3 => self.sp = self.regs_16().hl,
                             },
@@ -224,8 +229,8 @@ pub const CPU = struct {
                             0 => self.pc = self.consume_16(),
                             1 => @panic("TODO: CB"),
                             2...5 => @panic("Illegal Opcode"),
-                            6 => @panic("TODO: DI"),
-                            7 => @panic("TODO: EI"),
+                            6 => self.ime = false,
+                            7 => self.ie_next = true,
                         }
                     },
                     4 => {
@@ -248,6 +253,10 @@ pub const CPU = struct {
                     7 => self.call(@as(u16, y) * 8),
                 }
             }
+        }
+        if (self.ie_next) {
+            self.ime = true;
+            self.ie_next = false;
         }
         //don't use the alt table if this opcode doesn't have an alternative clock len
         std.debug.assert(!(use_alt_clock and ALT_CLOCK[@intCast(opcode)] == 0));
@@ -386,6 +395,7 @@ const Registers = packed struct {
 const Registers16 = packed struct {
     af:u16, bc:u16, de:u16, hl:u16,
 };
+//TODO: this can be rewritten to be just a u4, don't gotta cast the whole struct
 const Flags = packed struct {
     _pad12: u12, c: bool, h: bool, n: bool, z:bool, _pad48: u48,
 };
