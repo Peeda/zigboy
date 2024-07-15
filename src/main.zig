@@ -5,8 +5,7 @@ const rl = @cImport({
 fn byte_to_u2(in: u8) [4]u2 {
     const len = 4;
     var out = [_]u2 {0} ** len;
-    var i:usize = 0;
-    while (i < len) : (i += 1) {
+    for (0..len) |i| {
         const shift:u3 = @intCast((3 - i) * 2);
         const val = (in & (@as(u8,0b11) << shift)) >> shift;
         out[i] = @intCast(val);
@@ -16,8 +15,7 @@ fn byte_to_u2(in: u8) [4]u2 {
 fn u16_to_u2(in:u16) [8]u2 {
     const len = 8;
     var out = [_]u2 {0} ** len;
-    var i:usize = 0;
-    while (i < len) : (i += 1) {
+    for (0..len) |i| {
         const shift:u4 = @intCast((7 - i) * 2);
         const val = (in & (@as(u16,0b11) << shift)) >> shift;
         out[i] = @intCast(val);
@@ -26,8 +24,8 @@ fn u16_to_u2(in:u16) [8]u2 {
 }
 fn spread_bits(bits: u8) u16 {
     var out:u16 = 0;
-    var i:u16 = 0;
-    while (i < 8) : (i += 1) {
+    const len = 8;
+    for (0..len) |i| {
         if (bits & (@as(u8, 1) << @intCast(i)) > 0) {
             out |= (@as(u16, 1) << @intCast(2 * i));
         }
@@ -57,13 +55,11 @@ fn TileBuffer(comptime height_tiles: comptime_int, comptime width_tiles: comptim
             const tile_len = 8;
             std.debug.assert(y * tile_len + tile_len - 1 < self.height_pix);
             std.debug.assert(x * tile_len + tile_len - 1 < self.width_pix);
-            var row: usize = 0;
-            while (row < tile_len) : (row += 1) {
+            for (0..tile_len) |row| {
                 const ls_bits = spread_bits(tile_data[row*2]);
                 const ms_bits = spread_bits(tile_data[row*2 + 1]);
                 const row_data: [tile_len]u2 = u16_to_u2((ms_bits << 1) | ls_bits);
-                var col:usize = 0;
-                while (col < tile_len) : (col += 1) {
+                for (0..tile_len) |col| {
                     const color_id = row_data[col];
                     const palette_id = palette_arr[@intCast(color_id)];
                     const color = colors[@intCast(palette_id)];
@@ -95,14 +91,11 @@ pub fn main() void {
     const lcdc:LCDC = @bitCast(ram[0xFF40]);
 
     var tile_buffer = TileBuffer(16, 24) {};
-    {
-        var i:usize = 0;
-        while (i < 384) : (i += 1) {
-            const start = 0x8000 + i * 16;
-            const end = start + 16;
-            const width = tile_buffer.width_tiles;
-            tile_buffer.write_tile(ram[start..end], palette, i / width, i % width);
-        }
+    for (0..tile_buffer.width_tiles * tile_buffer.height_tiles) |i| {
+        const start = 0x8000 + i * 16;
+        const end = start + 16;
+        const width = tile_buffer.width_tiles;
+        tile_buffer.write_tile(ram[start..end], palette, i / width, i % width);
     }
     const tile_buffer_tex = rl.LoadRenderTexture(@intCast(tile_buffer.width_pix), @intCast(tile_buffer.height_pix));
     rl.UpdateTexture(tile_buffer_tex.texture, &tile_buffer.data);
