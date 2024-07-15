@@ -38,11 +38,15 @@ fn TileBuffer(comptime height_tiles: comptime_int, comptime width_tiles: comptim
     const height_pix = height_tiles * 8;
     const width_pix = width_tiles * 8;
     return struct {
-        height:usize = height_pix,
-        width:usize = width_pix,
+        //these are struct fields because I don't to keep the types in consts to access declarations,
+        //but should not vary at runtime
+        height_tiles:usize = height_tiles,
+        width_tiles:usize = width_tiles,
+        height_pix:usize = height_pix,
+        width_pix:usize = width_pix,
         data: [height_pix * width_pix]u32 = [_]u32{0xff000000} ** (height_pix * width_pix),
         inline fn set_pixel(self: *@This(), y:usize, x:usize, val:u32) void {
-            self.data[y * self.width + x] = val;
+            self.data[y * self.width_pix + x] = val;
         }
         //here x and y are talking about tiles, so pixels * 8
         pub fn write_tile(self: *@This(), tile_data: []const u8, palette: u8, y:usize, x:usize) void {
@@ -51,8 +55,8 @@ fn TileBuffer(comptime height_tiles: comptime_int, comptime width_tiles: comptim
             const palette_arr = byte_to_u2(palette);
             std.debug.assert(tile_data.len == 16);
             const tile_len = 8;
-            std.debug.assert(y * tile_len + tile_len - 1 < self.height);
-            std.debug.assert(x * tile_len + tile_len - 1 < self.width);
+            std.debug.assert(y * tile_len + tile_len - 1 < self.height_pix);
+            std.debug.assert(x * tile_len + tile_len - 1 < self.width_pix);
             var row: usize = 0;
             while (row < tile_len) : (row += 1) {
                 const ls_bits = spread_bits(tile_data[row*2]);
@@ -69,6 +73,16 @@ fn TileBuffer(comptime height_tiles: comptime_int, comptime width_tiles: comptim
         }
     };
 }
+const LCDC = packed struct {
+    BgWindowEnable: u1,
+    ObjEnable: u1,
+    ObjSize: u1,
+    BgTileMap: u1,
+    TileMapAddressing: u1,
+    WindowEnable: u1,
+    WindowTileMap: u1,
+    LcdPpuEnable: u1,
+};
 pub fn main() void {
     const screenWidth = 1600;
     const screenHeight = 800;
@@ -76,25 +90,51 @@ pub fn main() void {
     defer rl.CloseWindow();
     rl.SetTargetFPS(60);
 
-    const ram = @embedFile("pokemon.dmp");
-    const palette = ram[0xff47];
-    var tile_buffer = TileBuffer(16, 24) {};
-    var i:usize = 0;
-    while (i < 384) : (i += 1) {
-        const start = 0x8000 + i * 16;
-        const end = start + 16;
-        tile_buffer.write_tile(ram[start..end], palette, i / 24, i % 24);
-    }
+    const ram = @embedFile("zelda.dmp");
+    const palette = ram[0xFF47];
+    const lcdc:LCDC = @bitCast(ram[0xFF40]);
 
-    const tex = rl.LoadRenderTexture(@intCast(tile_buffer.width), @intCast(tile_buffer.height));
-    rl.UpdateTexture(tex.texture, &tile_buffer.data);
+    var tile_buffer = TileBuffer(16, 24) {};
+    {
+        var i:usize = 0;
+        while (i < 384) : (i += 1) {
+            const start = 0x8000 + i * 16;
+            const end = start + 16;
+            const width = tile_buffer.width_tiles;
+            tile_buffer.write_tile(ram[start..end], palette, i / width, i % width);
+        }
+    }
+    const tile_buffer_tex = rl.LoadRenderTexture(@intCast(tile_buffer.width_pix), @intCast(tile_buffer.height_pix));
+    rl.UpdateTexture(tile_buffer_tex.texture, &tile_buffer.data);
+
+    var bg_buffer = TileBuffer(32, 32) {};
+    //find which index buffer we're looking at, resolve addressing, then iterate over and write
+    const map_addr = switch (lcdc.BgTileMap) { 0 => 0x9800, 1 => 0x9C00, };
+    for (ram[map_addr..map_addr+32*32], 0..) |tile_id, i| {
+        const tile_addr:usize = switch (lcdc.TileMapAddressing) {
+            0 => switch (tile_id) {
+                0...127 => 0x9000 + @as(usize, tile_id) * 16,
+                128...255 => 0x8800 + @as(usize, tile_id - 128) * 16,
+            },
+            1 => 0x8000 + tile_id * 16,
+        };
+        const width = bg_buffer.width_tiles;
+        bg_buffer.write_tile(ram[tile_addr..tile_addr+16], palette,  i / width, i % width);
+    }
+    const bg_buffer_tex = rl.LoadRenderTexture(@intCast(bg_buffer.width_pix), @intCast(bg_buffer.height_pix));
+    rl.UpdateTexture(bg_buffer_tex.texture, &bg_buffer.data);
 
     while (!rl.WindowShouldClose()) {
         rl.BeginDrawing();
         rl.ClearBackground(rl.PURPLE);
         rl.DrawFPS(10, 10);
-        const pos: rl.Vector2 = rl.Vector2 { .x = 50, .y = 50, };
-        rl.DrawTextureEx(tex.texture, pos, 0, 2, rl.WHITE);
+
+        const tile_buffer_pos: rl.Vector2 = rl.Vector2 { .x = 955, .y = 50, };
+        rl.DrawTextureEx(tile_buffer_tex.texture, tile_buffer_pos, 0, 2, rl.WHITE);
+
+        const bg_buffer_pos: rl.Vector2 = rl.Vector2 {.x = 955, .y = 350};
+        rl.DrawTextureEx(bg_buffer_tex.texture, bg_buffer_pos, 0, 2, rl.WHITE);
+
         rl.EndDrawing();
     }
 }
