@@ -1,13 +1,5 @@
 const std = @import("std");
-pub const FlatMem = struct {
-    mem: [0xFFFF]u8 = [_]u8{0} ** 0xFFFF,
-    pub fn read(self: *FlatMem, addr16: u16) u8 {
-        return self.mem[addr16];
-    }
-    pub fn write(self: *FlatMem, addr16:u16, val:u8) void {
-        self.mem[addr16] = val;
-    }
-};
+const PPU = @import("ppu.zig").PPU;
 //This struct uses t cycles
 pub const DMA = struct {
     delay_t_cycles: u8 = 0,
@@ -42,22 +34,23 @@ pub const DMA = struct {
     }
 };
 pub const Bus = struct {
+    ppu: *PPU = undefined,
     ROM_0: [0x4000]u8 = [_]u8{0} ** 0x4000,
     ROM_1: [0x4000]u8 = [_]u8{0} ** 0x4000,
-    VRAM: [0x2000]u8 = [_]u8{0} ** 0x2000,
     ERAM: [0x2000]u8 = [_]u8{0} ** 0x2000,
     WRAM_0: [0x1000]u8 = [_]u8{0} ** 0x1000,
     WRAM_1: [0x1000]u8 = [_]u8{0} ** 0x1000,
     OAM: [0xA0]u8 = [_]u8{0} ** 0xA0,
     IO: [0x80]u8 = [_]u8{0} ** 0x80,
     HRAM: [0x7F]u8 = [_]u8{0} ** 0x7F,
-    IE: u8,
+    //TODO: check if ie should be initially 0
+    IE: u8 = 0,
     pub fn read(self: *Bus, addr16: u16) u8 {
         const addr:usize = @intCast(addr16);
         return switch (addr) {
             0x0000...0x3FFF => self.ROM_0[addr],
             0x4000...0x7FFF => self.ROM_1[addr - 0x4000],
-            0x8000...0x9FFF => self.VRAM[addr - 0x8000],
+            0x8000...0x9FFF => self.ppu.vram[addr - 0x8000],
             0xA000...0xBFFF => self.ERAM[addr - 0xA000],
             0xC000...0xCFFF => self.WRAM_0[addr - 0xC000],
             0xD000...0xDFFF => self.WRAM_1[addr - 0xD000],
@@ -70,6 +63,7 @@ pub const Bus = struct {
             0xFF00...0xFF7F => self.IO[addr - 0xFF00],
             0xFF80...0xFFFE => self.HRAM[addr - 0xFF80],
             0xFFFF => self.IE,
+            else => @panic("what."),
         };
     }
     pub fn write(self: *Bus, addr16:u16, val:u8) void {
@@ -78,7 +72,7 @@ pub const Bus = struct {
             //don't write to rom.
             0x0000...0x3FFF => {},
             0x4000...0x7FFF => {},
-            0x8000...0x9FFF => self.VRAM[addr - 0x8000] = val,
+            0x8000...0x9FFF => self.ppu.vram[addr - 0x8000] = val,
             0xA000...0xBFFF => self.ERAM[addr - 0xA000] = val,
             0xC000...0xCFFF => self.WRAM_0[addr - 0xC000] = val,
             0xD000...0xDFFF => self.WRAM_1[addr - 0xD000] = val,
@@ -97,6 +91,8 @@ pub const Bus = struct {
             },
             0xFF80...0xFFFE => self.HRAM[addr - 0xFF80] = val,
             0xFFFF => self.IE = val,
+            //TODO: this is needed to compile but i don't see which case isn't handled
+            else => @panic("what."),
         }
     }
 };
