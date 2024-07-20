@@ -1,4 +1,6 @@
 //TODO: write a test for the bus read write consistency
+//TODO: allow bus to return pointer for cpu, or rewrite certain opcodes
+//TODO: stop, halt, daa
 const std = @import("std");
 const rl = @cImport({
     @cInclude("raylib.h");

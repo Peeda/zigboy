@@ -1,8 +1,11 @@
 //TODO: error handling with illegal opcodes
+//TODO: logging
 const std = @import("std");
+const Bus = @import("bus.zig").Bus;
 pub const CPU = struct {
+    bus: *Bus,
     regs: Registers = Registers {},
-    sp:u16 = 0xFFFE, pc:u16 = 0x0100, ime:bool = false, 
+    sp:u16 = 0xFFFE, pc:u16 = 0x0100, ime:bool = false,
     //was an ie operation executed last step
     ie_next:bool = false,
     pub fn step(self: *CPU) u8 {
@@ -25,7 +28,6 @@ pub const CPU = struct {
                 0 => switch (y) {
                     0 => {},
                     1 => {
-                        //TODO: move this into a function
                         //write sp to memory
                         const addr = self.consume_16();
                         self.write(addr, @as(u8, @intCast(self.sp & 0x0f)));
@@ -226,8 +228,105 @@ pub const CPU = struct {
                     },
                     3 => {
                         switch (y) {
+                            //TODO: make sure I'm using cb x y z not the normal ones
+                            //maybe move this into a function, too much indentation
+                            //also shared flag behavior between bit ops
                             0 => self.pc = self.consume_16(),
-                            1 => @panic("TODO: CB"),
+                            1 => {
+                                const cb_opcode = self.consume_byte();
+                                const cb_x: u2 = @intCast((cb_opcode & 0b11000000) >> 6);
+                                const cb_y: u3 = @intCast((cb_opcode & 0b00111000) >> 3);
+                                const cb_z: u3 = @intCast((cb_opcode & 0b00000111));
+                                const val = self.table_r8(cb_z).*;
+                                const math = std.math;
+                                switch (cb_x) {
+                                    0 => {
+                                        switch (cb_y) {
+                                            //rlc, rrc
+                                            0, 1 => {
+                                                if (cb_y == 0) {
+                                                    self.flags().c = (val & (1 << 7)) > 0;
+                                                    self.table_r8(cb_z).* = math.rotl(u8, val, @as(usize, 1));
+                                                } else {
+                                                    std.debug.assert(cb_y == 1);
+                                                    self.flags().c = (val & 1) >> 0;
+                                                    self.table_r8(cb_z).* = math.rotr(u8, val, @as(usize, 1));
+                                                }
+                                                self.flags().z = self.table_r8(cb_z).* == 0;
+                                                self.flags().n = false;
+                                                self.flags().h = false;
+                                            },
+                                            2, 3 => {
+                                                //rl, rr
+                                                if (cb_y == 2) {
+                                                    const top_set = (val & (1 << 7)) > 0;
+                                                    self.table_r8(cb_z).* = val << 1;
+                                                    if (self.flags().c) self.table_r8(cb_z).* = self.table_r8(cb_z).* | 1;
+                                                    self.flags().c = top_set;
+                                                } else {
+                                                    std.debug.assert(cb_y == 3);
+                                                    const bottom_set = (val & 1) > 0;
+                                                    self.table_r8(cb_z).* = val >> 1;
+                                                    if (self.flags().c) self.table_r8(cb_z).* = self.table_r8(cb_z).* | (1 << 7);
+                                                    self.flags().c = bottom_set;
+                                                }
+                                                self.flags().z = self.table_r8(cb_z).* == 0;
+                                                self.flags().n = false;
+                                                self.flags().h = false;
+                                            },
+                                            4, 5 => {
+                                                //sla, sra (arithmetic shift)
+                                                if (cb_y == 4) {
+                                                    self.flags().c = (val & (1 << 7)) > 0;
+                                                    self.table_r8(cb_z).* = val << 1;
+                                                } else {
+                                                    std.debug.assert(cb_y == 5);
+                                                    const top_set = (val & (1 << 7)) > 0;
+                                                    self.flags().c = (val & 1) > 0;
+                                                    self.table_r8(cb_z).* = val >> 1;
+                                                    //when sra bit seven stays
+                                                    if (top_set) self.table_r8(cb_z).* = self.table_r8(cb_z).* | (1 << 7);
+                                                }
+                                                self.flags().z = self.table_r8(cb_z).* == 0;
+                                                self.flags().n = false;
+                                                self.flags().h = false;
+                                            },
+                                            6 => {
+                                                //swap
+                                                var accum:u8 = 0;
+                                                const top_half = (val & 0xf0);
+                                                const bottom_half = val & 0xf;
+                                                accum |= top_half >> 4;
+                                                accum |= bottom_half << 4;
+                                                self.set_flags(self.table_r8(cb_z).* == 0, false, false, false);
+                                            },
+                                            7 => {
+                                                //srl, logical shift
+                                                self.flags().c = (val & 1) > 0;
+                                                self.table_r8(cb_z).* = val >> 1;
+                                                self.flags().z = self.table_r8(cb_z).* == 0;
+                                                self.flags().n = false;
+                                                self.flags().h = false;
+                                            },
+                                        }
+                                    },
+                                    1 => {
+                                        //test bit y of reg z
+                                        self.flags().z = (val & (1 << cb_y)) > 0;
+                                        self.flags().n = false;
+                                        self.flags().h = true;
+                                    },
+                                    2 => {
+                                        //reset bit y of reg z
+                                        const mask = ~(1 << cb_y);
+                                        self.table_r8(cb_z).* = (val & mask);
+                                    },
+                                    3 => {
+                                        //set bit y of reg z
+                                        self.table_r8(cb_z).* = val | (1 << cb_y);
+                                    },
+                                }
+                            },
                             2...5 => @panic("Illegal Opcode"),
                             6 => self.ime = false,
                             7 => self.ie_next = true,
@@ -389,7 +488,7 @@ pub const CPU = struct {
     }
 };
 const Registers = packed struct {
-    a: u8 = 0x01, f:u8 = 0xB0, b:u8 = 0, c:u8 = 0x13, 
+    a: u8 = 0x01, f:u8 = 0xB0, b:u8 = 0, c:u8 = 0x13,
     d:u8 = 0, e:u8 = 0xD8, h:u8 = 0x01, l:u8 = 0x4D,
 };
 const Registers16 = packed struct {
@@ -442,38 +541,38 @@ test "add_flags" {
     try testing.expect(cpu.regs.f & (1 << 4) > 0);
 }
 const CLOCK = [_]u8 {
- 4, 12,  8,  8,  4,  4,  8,  4, 20,  8,  8,  8,  4,  4,  8,  4, 
- 4, 12,  8,  8,  4,  4,  8,  4, 12,  8,  8,  8,  4,  4,  8,  4, 
- 8, 12,  8,  8,  4,  4,  8,  4,  8,  8,  8,  8,  4,  4,  8,  4, 
- 8, 12,  8,  8, 12, 12, 12,  4,  8,  8,  8,  8,  4,  4,  8,  4, 
- 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
- 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
- 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
- 8,  8,  8,  8,  8,  8,  4,  8,  4,  4,  4,  4,  4,  4,  8,  4, 
- 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
- 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
- 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
- 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4, 
- 8, 12, 12, 16, 12, 16,  8, 16,  8, 16, 12,  4, 12, 24,  8, 16, 
- 8, 12, 12,  4, 12, 16,  8, 16,  8, 16, 12,  4, 12,  4,  8, 16, 
-12, 12,  8,  4,  4, 16,  8, 16, 16,  4, 16,  4,  4,  4,  8, 16, 
-12, 12,  8,  4,  4, 16,  8, 16, 12,  8, 16,  4,  4,  4,  8, 16, 
+ 4, 12,  8,  8,  4,  4,  8,  4, 20,  8,  8,  8,  4,  4,  8,  4,
+ 4, 12,  8,  8,  4,  4,  8,  4, 12,  8,  8,  8,  4,  4,  8,  4,
+ 8, 12,  8,  8,  4,  4,  8,  4,  8,  8,  8,  8,  4,  4,  8,  4,
+ 8, 12,  8,  8, 12, 12, 12,  4,  8,  8,  8,  8,  4,  4,  8,  4,
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4,
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4,
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4,
+ 8,  8,  8,  8,  8,  8,  4,  8,  4,  4,  4,  4,  4,  4,  8,  4,
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4,
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4,
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4,
+ 4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8,  4,
+ 8, 12, 12, 16, 12, 16,  8, 16,  8, 16, 12,  4, 12, 24,  8, 16,
+ 8, 12, 12,  4, 12, 16,  8, 16,  8, 16, 12,  4, 12,  4,  8, 16,
+12, 12,  8,  4,  4, 16,  8, 16, 16,  4, 16,  4,  4,  4,  8, 16,
+12, 12,  8,  4,  4, 16,  8, 16, 12,  8, 16,  4,  4,  4,  8, 16,
 };
 pub const ALT_CLOCK = [_]u8 {
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
-12,  0,  0,  0,  0,  0,  0,  0, 12,  0,  0,  0,  0,  0,  0,  0, 
-12,  0,  0,  0,  0,  0,  0,  0, 12,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
-20,  0, 16,  0, 24,  0,  0,  0, 20,  0, 16,  0, 24,  0,  0,  0, 
-20,  0, 16,  0, 24,  0,  0,  0, 20,  0, 16,  0, 24,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
- 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+12,  0,  0,  0,  0,  0,  0,  0, 12,  0,  0,  0,  0,  0,  0,  0,
+12,  0,  0,  0,  0,  0,  0,  0, 12,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+20,  0, 16,  0, 24,  0,  0,  0, 20,  0, 16,  0, 24,  0,  0,  0,
+20,  0, 16,  0, 24,  0,  0,  0, 20,  0, 16,  0, 24,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+ 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 };
