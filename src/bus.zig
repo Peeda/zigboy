@@ -1,6 +1,5 @@
 const std = @import("std");
 const PPU = @import("ppu.zig").PPU;
-//This struct uses t cycles
 pub const DMA = struct {
     delay_t_cycles: u8 = 0,
     base_addr: u16 = 0,

@@ -82,12 +82,66 @@ const LCDC = packed struct {
     WindowTileMap: u1,
     LcdPpuEnable: u1,
 };
+const PpuMode = enum {
+    HBlank,
+    VBlank,
+    OamScan,
+    Drawing,
+};
 pub const PPU = struct {
     bus: *Bus,
     vram: [0x2000]u8 = [_]u8{0} ** 0x2000,
+    dots: u32 = 0,
+    mode: PpuMode = PpuMode.OamScan,
     debug_tiles: DebugTilesBuffer = DebugTilesBuffer {},
     debug_bg: BgWindowBuffer = BgWindowBuffer {},
     debug_window: BgWindowBuffer = BgWindowBuffer {},
+    pub fn step(self: *PPU, t_cycles: u8) void {
+        //just want to make sure we can't completely skip a mode
+        std.debug.assert(t_cycles <= 80);
+        const next_mode = PPU.get_mode(self.dots + t_cycles);
+        if (next_mode == self.mode) {return;}
+
+        //make sure the transition is an expected case
+        std.debug.assert(@intFromEnum(self.mode) + 1 == @intFromEnum(next_mode)
+        or (self.mode == PpuMode.Drawing and next_mode == PpuMode.HBlank));
+
+        switch (self.mode) {
+            PpuMode.HBlank => {},
+            PpuMode.VBlank => {
+                //disable OAM
+            },
+            PpuMode.OamScan => {
+                //disable vram
+            },
+            PpuMode.Drawing => {
+                //render a scanline
+            },
+        }
+
+        self.dots += t_cycles;
+        const frame_len = 70224;
+        self.dots %= frame_len;
+    }
+    fn get_mode(dots:u32) PpuMode {
+        //each line is 456 dots, 456 * 154 is 70224
+        //456 * 144 = 65664
+        //[0, 65663] is drawing, [65664, 70223] is vblank
+        const line_len = 456;
+        const lines_len = 65664;
+        const frame_len = 70224;
+        if (dots < lines_len) {
+            //drawing a line
+            return switch (dots % line_len) {
+                0...79 => PpuMode.OamScan,
+                80...251 => PpuMode.Drawing,
+                252...455 => PpuMode.HBlank,
+            };
+        } else {
+            std.debug.assert(dots < frame_len);
+            return PpuMode.VBlank;
+        }
+    }
     pub fn update_debug_tile_data(self: *PPU) void {
         var tile_buffer = &self.debug_tiles;
         const palette = self.bus.read(0xFF47);

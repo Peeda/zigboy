@@ -1,3 +1,6 @@
+//TODO: get basic scanline rendering going, connect CPU, PPU, Bus
+//TODO: handle restricted reads/writes, does bus check ppu or does ppu control bus
+//TODO: resolve timing between components, PPU updates after CPU so for one update CPU can access restricted mem
 //TODO: write a test for the bus read write consistency
 //TODO: allow bus to return pointer for cpu, or rewrite certain opcodes
 //TODO: stop, halt, daa
