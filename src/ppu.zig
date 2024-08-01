@@ -1,5 +1,11 @@
 const std = @import("std");
 const Bus = @import("bus.zig").Bus;
+const addrs = struct {
+    const LCDC:u16 = 0xFF40;
+    const palette:u16 = 0xFF47;
+    const SCY:u16 = 0xFF42;
+    const SCX:u16 = 0xFF43;
+};
 fn byte_to_u2(in: u8) [4]u2 {
     const len = 4;
     var out = [_]u2 {0} ** len;
@@ -44,8 +50,11 @@ fn TileBuffer(comptime height_tiles: comptime_int, comptime width_tiles: comptim
         pub fn tile_count(self: *@This()) usize {
             return self.height_tiles * self.width_tiles;
         }
-        inline fn set_pixel(self: *@This(), y:usize, x:usize, val:u32) void {
+        pub inline fn set_pixel(self: *@This(), y:usize, x:usize, val:u32) void {
             self.data[y * self.width_pix + x] = val;
+        }
+        pub inline fn get_pixel(self: @This(), y:usize, x:usize) u32 {
+            return self.data[y * self.width_pix + x];
         }
         //here x and y are talking about tiles, so pixels * 8
         pub fn write_tile(self: *@This(), tile_data: []const u8, palette: u8, y:usize, x:usize) void {
@@ -70,8 +79,6 @@ fn TileBuffer(comptime height_tiles: comptime_int, comptime width_tiles: comptim
         }
     };
 }
-pub const DebugTilesBuffer = TileBuffer(16, 24);
-pub const BgWindowBuffer = TileBuffer(32, 32);
 const LCDC = packed struct {
     BgWindowEnable: u1,
     ObjEnable: u1,
@@ -88,11 +95,14 @@ const PpuMode = enum {
     OamScan,
     Drawing,
 };
+pub const DebugTilesBuffer = TileBuffer(16, 24);
+pub const BgWindowBuffer = TileBuffer(32, 32);
 pub const PPU = struct {
     bus: *Bus,
     vram: [0x2000]u8 = [_]u8{0} ** 0x2000,
     dots: u32 = 0,
     mode: PpuMode = PpuMode.OamScan,
+    lcd: TileBuffer(18, 20) = TileBuffer(18, 20) {},
     debug_tiles: DebugTilesBuffer = DebugTilesBuffer {},
     debug_bg: BgWindowBuffer = BgWindowBuffer {},
     debug_window: BgWindowBuffer = BgWindowBuffer {},
@@ -103,8 +113,7 @@ pub const PPU = struct {
         if (next_mode == self.mode) {return;}
 
         //make sure the transition is an expected case
-        std.debug.assert(@intFromEnum(self.mode) + 1 == @intFromEnum(next_mode)
-        or (self.mode == PpuMode.Drawing and next_mode == PpuMode.HBlank));
+        std.debug.assert((@intFromEnum(self.mode) + 1) % 4 == @intFromEnum(next_mode));
 
         switch (self.mode) {
             PpuMode.HBlank => {},
@@ -116,12 +125,60 @@ pub const PPU = struct {
             },
             PpuMode.Drawing => {
                 //render a scanline
+                const line_len = 456;
+                self.render_scanline((self.dots + t_cycles) / line_len);
             },
         }
 
         self.dots += t_cycles;
         const frame_len = 70224;
         self.dots %= frame_len;
+    }
+    //TODO: should not be pub
+    pub fn render_scanline(self: *PPU, scanline: u8) void {
+        const screen_height = 144;
+        const screen_width = 160;
+        std.debug.assert(scanline < screen_height);
+        const lcdc:LCDC = @bitCast(self.bus.read(addrs.LCDC));
+        if (lcdc.BgWindowEnable == 0) {
+            @panic("TODO:, should draw white except objects");
+        }
+        if (lcdc.LcdPpuEnable == 0) {
+            @panic("TODO:, shoudn't draw and should allow bus reads/writes");
+        }
+        for (0..screen_width) |i| {
+            //just use overflowing add since these are u8s, wrap around 256x256 tilemap
+            const bg_y:u8 = self.bus.read(addrs.SCY) +% scanline;
+            const bg_x:u8 = self.bus.read(addrs.SCX) +% @as(u8, @intCast(i));
+            //find what tile in the bg map is contains this pixel
+            const tile_y = bg_y / 8;
+            const tile_x = bg_x / 8;
+            std.debug.assert(tile_y < 32 and tile_x < 32);
+            const map_addr:u16 = switch (lcdc.BgTileMap) { 0 => 0x1800, 1 => 0x1C00, };
+            const tile_map_len:usize = 32;
+            const tile_id = self.vram[map_addr + tile_y * tile_map_len + tile_x];
+            //on the tile, which pixel are we looking at
+            const pixel_y = bg_y % 8;
+            const pixel_x = bg_x % 8;
+            const tile_addr:usize = switch (lcdc.TileMapAddressing) {
+                0 => switch (tile_id) {
+                    0...127 => 0x1000 + @as(usize, tile_id) * 16,
+                    128...255 => 0x800 + @as(usize, tile_id - 128) * 16,
+                },
+                1 => @as(usize, tile_id) * 16,
+            };
+            const tile_row_addr = tile_addr + pixel_y * 2;
+            const ls_bits = spread_bits(self.vram[tile_row_addr]);
+            const ms_bits = spread_bits(self.vram[tile_row_addr + 1]);
+            const row_data: [8]u2 = u16_to_u2((ms_bits << 1) | ls_bits);
+            const color_id = row_data[@intCast(pixel_x)];
+            const palette_arr = byte_to_u2(self.bus.read(addrs.palette));
+            const palette_id = palette_arr[@intCast(color_id)];
+            const colors = [_]u32 {0xFF000000, 0xFF555555, 0xFFAAAAAA, 0xFFFFFFFF};
+            const color = colors[@intCast(palette_id)];
+
+            self.lcd.set_pixel(scanline, i, color);
+        }
     }
     fn get_mode(dots:u32) PpuMode {
         //each line is 456 dots, 456 * 154 is 70224
@@ -144,7 +201,7 @@ pub const PPU = struct {
     }
     pub fn update_debug_tile_data(self: *PPU) void {
         var tile_buffer = &self.debug_tiles;
-        const palette = self.bus.read(0xFF47);
+        const palette = self.bus.read(addrs.palette);
         for (0..tile_buffer.tile_count()) |i| {
             const width = tile_buffer.width_tiles;
             const start = i * 16;
@@ -152,7 +209,7 @@ pub const PPU = struct {
         }
     }
     pub fn update_debug_tilemap(self: *PPU, map_type: TileMapType) void {
-        const lcdc:LCDC = @bitCast(self.bus.read(0xFF40));
+        const lcdc:LCDC = @bitCast(self.bus.read(addrs.LCDC));
         var map_buffer = switch (map_type) {
             .Background => &self.debug_bg,
             .Window => &self.debug_window,
@@ -163,7 +220,7 @@ pub const PPU = struct {
             .Window => lcdc.WindowTileMap,
         };
         //TODO: maybe do something about all these magic numbers, handle vram vs bus addr
-        const palette = self.bus.read(0xFF47);
+        const palette = self.bus.read(addrs.palette);
         const map_addr:usize = switch (lcdc_bit) { 0 => 0x1800, 1 => 0x1C00, };
         for (self.vram[map_addr..map_addr+map_buffer.tile_count()], 0..) |tile_id, i| {
             const tile_addr:usize = switch (lcdc.TileMapAddressing) {
