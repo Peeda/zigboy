@@ -89,7 +89,7 @@ const LCDC = packed struct {
     WindowTileMap: u1,
     LcdPpuEnable: u1,
 };
-const PpuMode = enum {
+pub const PpuMode = enum {
     HBlank,
     VBlank,
     OamScan,
@@ -109,13 +109,17 @@ pub const PPU = struct {
     pub fn step(self: *PPU, t_cycles: u8) void {
         //just want to make sure we can't completely skip a mode
         std.debug.assert(t_cycles <= 80);
-        const next_mode = PPU.get_mode(self.dots + t_cycles);
-        if (next_mode == self.mode) {return;}
+
+        const old_mode = self.mode;
+        self.dots += t_cycles;
+        const frame_len = 70224;
+        self.dots %= frame_len;
+        const next_mode = PPU.get_mode(self.dots);
+        if (next_mode == old_mode) {return;}
 
         //make sure the transition is an expected case
-        std.debug.assert((@intFromEnum(self.mode) + 1) % 4 == @intFromEnum(next_mode));
 
-        switch (self.mode) {
+        switch (old_mode) {
             PpuMode.HBlank => {},
             PpuMode.VBlank => {
                 //disable OAM
@@ -126,13 +130,10 @@ pub const PPU = struct {
             PpuMode.Drawing => {
                 //render a scanline
                 const line_len = 456;
-                self.render_scanline((self.dots + t_cycles) / line_len);
+                self.render_scanline(@intCast(self.dots / line_len));
             },
         }
-
-        self.dots += t_cycles;
-        const frame_len = 70224;
-        self.dots %= frame_len;
+        self.mode = next_mode;
     }
     //TODO: should not be pub
     pub fn render_scanline(self: *PPU, scanline: u8) void {
@@ -141,10 +142,10 @@ pub const PPU = struct {
         std.debug.assert(scanline < screen_height);
         const lcdc:LCDC = @bitCast(self.bus.read(addrs.LCDC));
         if (lcdc.BgWindowEnable == 0) {
-            @panic("TODO:, should draw white except objects");
+            //@panic("TODO:, should draw white except objects");
         }
         if (lcdc.LcdPpuEnable == 0) {
-            @panic("TODO:, shoudn't draw and should allow bus reads/writes");
+            //@panic("TODO:, shoudn't draw and should allow bus reads/writes");
         }
         for (0..screen_width) |i| {
             //just use overflowing add since these are u8s, wrap around 256x256 tilemap
@@ -193,6 +194,7 @@ pub const PPU = struct {
                 0...79 => PpuMode.OamScan,
                 80...251 => PpuMode.Drawing,
                 252...455 => PpuMode.HBlank,
+                else => unreachable,
             };
         } else {
             std.debug.assert(dots < frame_len);

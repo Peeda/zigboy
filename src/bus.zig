@@ -44,6 +44,16 @@ pub const Bus = struct {
     HRAM: [0x7F]u8 = [_]u8{0} ** 0x7F,
     //TODO: check if ie should be initially 0
     IE: u8 = 0,
+    pub fn load(self: *Bus, rom: []const u8) void {
+        //TODO: this is just for roms that take up the two banks
+        for (0..0x8000) |i| {
+            switch (i) {
+                0x0000...0x3FFF => self.ROM_0[i] = rom[i],
+                0x4000...0x7FFF => self.ROM_1[i - 0x4000] = rom[i],
+                else => unreachable,
+            }
+        }
+    }
     pub fn read(self: *Bus, addr16: u16) u8 {
         const addr:usize = @intCast(addr16);
         return switch (addr) {

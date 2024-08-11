@@ -9,13 +9,16 @@ pub const CPU = struct {
     //was an ie operation executed last step
     ie_next:bool = false,
     pub fn step(self: *CPU) u8 {
-        var clocks_taken = 0;
+        var clocks_taken:u8 = 0;
         clocks_taken += self.execute(self.consume_byte());
         //handle interrupts
         return clocks_taken;
     }
     //does one instruction, returns number of clocks
     pub fn execute(self: *CPU, opcode: u8) u8 {
+        if (opcode != 0) {
+            std.debug.print("executing {X}\n", .{opcode});
+        }
         //https://gb-archive.github.io/salvage/decoding_gbz80_opcodes/Decoding%20Gamboy%20Z80%20Opcodes.html
         const x: u2 = @intCast((opcode & 0b11000000) >> 6);
         const y: u3 = @intCast((opcode & 0b00111000) >> 3);
@@ -249,7 +252,7 @@ pub const CPU = struct {
                                                     self.table_r8(cb_z).* = math.rotl(u8, val, @as(usize, 1));
                                                 } else {
                                                     std.debug.assert(cb_y == 1);
-                                                    self.flags().c = (val & 1) >> 0;
+                                                    self.flags().c = (val & 1) > 0;
                                                     self.table_r8(cb_z).* = math.rotr(u8, val, @as(usize, 1));
                                                 }
                                                 self.flags().z = self.table_r8(cb_z).* == 0;
@@ -312,18 +315,18 @@ pub const CPU = struct {
                                     },
                                     1 => {
                                         //test bit y of reg z
-                                        self.flags().z = (val & (1 << cb_y)) > 0;
+                                        self.flags().z = (val & (@as(u8,1) << cb_y)) > 0;
                                         self.flags().n = false;
                                         self.flags().h = true;
                                     },
                                     2 => {
                                         //reset bit y of reg z
-                                        const mask = ~(1 << cb_y);
+                                        const mask = ~(@as(u8,1) << cb_y);
                                         self.table_r8(cb_z).* = (val & mask);
                                     },
                                     3 => {
                                         //set bit y of reg z
-                                        self.table_r8(cb_z).* = val | (1 << cb_y);
+                                        self.table_r8(cb_z).* = val | (@as(u8,1) << cb_y);
                                     },
                                 }
                             },
@@ -412,19 +415,15 @@ pub const CPU = struct {
         @panic("todo");
     }
     fn read(self: *CPU, addr: u16) u8 {
-        _ = addr;
-        _ = self;
-        @panic("todo");
+        return self.bus.read(addr);
     }
     fn write(self: *CPU, addr: u16, val: u8) void {
-        _ = addr;
-        _ = val;
-        _ = self;
-        @panic("todo");
+        self.bus.write(addr, val);
     }
     fn consume_byte(self: *CPU) u8 {
+        const val = self.read(self.pc);
         self.pc +%= 1;
-        return self.read(self.pc - 1);
+        return val;
     }
     fn consume_16(self: *CPU) u16 {
         const low:u16 = @intCast(self.consume_byte());
