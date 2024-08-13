@@ -101,17 +101,17 @@ pub const CPU = struct {
                     }
                 },
                 4 => {
-                    self.flags().z = self.table_r8(y).* +% 1 == 0;
+                    self.flags().z = self.read_table_r8(y) +% 1 == 0;
                     self.flags().n = false;
-                    self.flags().h = (self.table_r8(y).* & 0xf) == 0x0f;
-                    self.table_r8(y).* +%= 1;
+                    self.flags().h = (self.read_table_r8(y) & 0xf) == 0x0f;
+                    self.write_table_r8(y, self.read_table_r8(y) +% 1);
                 },
                 5 => {
-                    self.flags().z = self.table_r8(y).* == 1;
+                    self.flags().z = self.read_table_r8(y) == 1;
                     self.flags().n = true;
-                    self.flags().h = (self.table_r8(y).* & 0x0f) == 0;
+                    self.flags().h = (self.read_table_r8(y) & 0x0f) == 0;
                 },
-                6 => self.table_r8(y).* = self.consume_byte(),
+                6 => self.write_table_r8(y, self.consume_byte()),
                 7 => {
                     switch (y) {
                         0 => {
@@ -163,10 +163,10 @@ pub const CPU = struct {
                 if (y == 6 and z == 6) {
                     @panic("halt instruction todo");
                 } else {
-                    self.table_r8(y).* = self.table_r8(z).*;
+                    self.write_table_r8(y, self.read_table_r8(z));
                 }
             },
-            2 => self.alu_8(y, self.table_r8(z).*),
+            2 => self.alu_8(y, self.read_table_r8(z)),
             3 => {
                 switch (z) {
                     0 => {
@@ -240,7 +240,7 @@ pub const CPU = struct {
                                 const cb_x: u2 = @intCast((cb_opcode & 0b11000000) >> 6);
                                 const cb_y: u3 = @intCast((cb_opcode & 0b00111000) >> 3);
                                 const cb_z: u3 = @intCast((cb_opcode & 0b00000111));
-                                const val = self.table_r8(cb_z).*;
+                                const val = self.read_table_r8(cb_z);
                                 const math = std.math;
                                 switch (cb_x) {
                                     0 => {
@@ -249,13 +249,15 @@ pub const CPU = struct {
                                             0, 1 => {
                                                 if (cb_y == 0) {
                                                     self.flags().c = (val & (1 << 7)) > 0;
-                                                    self.table_r8(cb_z).* = math.rotl(u8, val, @as(usize, 1));
+                                                    const write_val = math.rotl(u8, val, @as(usize, 1));
+                                                    self.write_table_r8(cb_z, write_val);
                                                 } else {
                                                     std.debug.assert(cb_y == 1);
                                                     self.flags().c = (val & 1) > 0;
-                                                    self.table_r8(cb_z).* = math.rotr(u8, val, @as(usize, 1));
+                                                    const write_val = math.rotr(u8, val, @as(usize, 1));
+                                                    self.write_table_r8(cb_z, write_val);
                                                 }
-                                                self.flags().z = self.table_r8(cb_z).* == 0;
+                                                self.flags().z = self.read_table_r8(cb_z) == 0;
                                                 self.flags().n = false;
                                                 self.flags().h = false;
                                             },
@@ -263,17 +265,21 @@ pub const CPU = struct {
                                                 //rl, rr
                                                 if (cb_y == 2) {
                                                     const top_set = (val & (1 << 7)) > 0;
-                                                    self.table_r8(cb_z).* = val << 1;
-                                                    if (self.flags().c) self.table_r8(cb_z).* = self.table_r8(cb_z).* | 1;
+                                                    self.write_table_r8(cb_z, val << 1);
+                                                    if (self.flags().c) {
+                                                        self.write_table_r8(cb_z, self.read_table_r8(cb_z) | 1);
+                                                    }
                                                     self.flags().c = top_set;
                                                 } else {
                                                     std.debug.assert(cb_y == 3);
                                                     const bottom_set = (val & 1) > 0;
-                                                    self.table_r8(cb_z).* = val >> 1;
-                                                    if (self.flags().c) self.table_r8(cb_z).* = self.table_r8(cb_z).* | (1 << 7);
+                                                    self.write_table_r8(cb_z, val >> 1);
+                                                    if (self.flags().c) {
+                                                        self.write_table_r8(cb_z, self.read_table_r8(cb_z) | (1 << 7));
+                                                    }
                                                     self.flags().c = bottom_set;
                                                 }
-                                                self.flags().z = self.table_r8(cb_z).* == 0;
+                                                self.flags().z = self.read_table_r8(cb_z) == 0;
                                                 self.flags().n = false;
                                                 self.flags().h = false;
                                             },
@@ -281,16 +287,18 @@ pub const CPU = struct {
                                                 //sla, sra (arithmetic shift)
                                                 if (cb_y == 4) {
                                                     self.flags().c = (val & (1 << 7)) > 0;
-                                                    self.table_r8(cb_z).* = val << 1;
+                                                    self.write_table_r8(cb_z, val << 1);
                                                 } else {
                                                     std.debug.assert(cb_y == 5);
                                                     const top_set = (val & (1 << 7)) > 0;
                                                     self.flags().c = (val & 1) > 0;
-                                                    self.table_r8(cb_z).* = val >> 1;
+                                                    self.write_table_r8(cb_z, val >> 1);
                                                     //when sra bit seven stays
-                                                    if (top_set) self.table_r8(cb_z).* = self.table_r8(cb_z).* | (1 << 7);
+                                                    if (top_set) {
+                                                        self.write_table_r8(cb_z, self.read_table_r8(cb_z) | (1 << 7));
+                                                    }
                                                 }
-                                                self.flags().z = self.table_r8(cb_z).* == 0;
+                                                self.flags().z = self.read_table_r8(cb_z) == 0;
                                                 self.flags().n = false;
                                                 self.flags().h = false;
                                             },
@@ -301,13 +309,13 @@ pub const CPU = struct {
                                                 const bottom_half = val & 0xf;
                                                 accum |= top_half >> 4;
                                                 accum |= bottom_half << 4;
-                                                self.set_flags(self.table_r8(cb_z).* == 0, false, false, false);
+                                                self.set_flags(self.read_table_r8(cb_z) == 0, false, false, false);
                                             },
                                             7 => {
                                                 //srl, logical shift
                                                 self.flags().c = (val & 1) > 0;
-                                                self.table_r8(cb_z).* = val >> 1;
-                                                self.flags().z = self.table_r8(cb_z).* == 0;
+                                                self.write(cb_z, val >> 1);
+                                                self.flags().z = self.read_table_r8(cb_z) == 0;
                                                 self.flags().n = false;
                                                 self.flags().h = false;
                                             },
@@ -322,11 +330,11 @@ pub const CPU = struct {
                                     2 => {
                                         //reset bit y of reg z
                                         const mask = ~(@as(u8,1) << cb_y);
-                                        self.table_r8(cb_z).* = (val & mask);
+                                        self.write_table_r8(cb_z, val & mask);
                                     },
                                     3 => {
                                         //set bit y of reg z
-                                        self.table_r8(cb_z).* = val | (@as(u8,1) << cb_y);
+                                        self.write_table_r8(cb_z, val | (@as(u8,1) << cb_y));
                                     },
                                 }
                             },
@@ -364,17 +372,29 @@ pub const CPU = struct {
         std.debug.assert(!(use_alt_clock and ALT_CLOCK[@intCast(opcode)] == 0));
         return if (use_alt_clock) ALT_CLOCK[@intCast(opcode)] else CLOCK[@intCast(opcode)];
     }
-    fn table_r8(self: *CPU, id: u3) *u8 {
+    fn read_table_r8(self: *CPU, id: u3) u8 {
         return switch (id) {
-            0 => &self.regs.b,
-            1 => &self.regs.c,
-            2 => &self.regs.d,
-            3 => &self.regs.e,
-            4 => &self.regs.h,
-            5 => &self.regs.l,
-            6 => self.mem_ptr(self.regs_16().hl),
-            7 => &self.regs.a,
+            0 => self.regs.b,
+            1 => self.regs.c,
+            2 => self.regs.d,
+            3 => self.regs.e,
+            4 => self.regs.h,
+            5 => self.regs.l,
+            6 => self.read(self.regs_16().hl),
+            7 => self.regs.a,
         };
+    } 
+    fn write_table_r8(self: *CPU, id:u3, val:u8) void {
+        switch (id) {
+            0 => {self.regs.b = val;},
+            1 => {self.regs.c = val;},
+            2 => {self.regs.d = val;},
+            3 => {self.regs.e = val;},
+            4 => {self.regs.h = val;},
+            5 => {self.regs.l = val;},
+            6 => {self.write(self.regs_16().hl, val);},
+            7 => {self.regs.a = val;},
+        }
     }
     fn table_rp(self: *CPU, id: u2) *u16 {
         return switch (id) {
@@ -408,11 +428,6 @@ pub const CPU = struct {
     }
     fn flags(self: *CPU) *Flags {
         return @ptrCast(&self.regs);
-    }
-    fn mem_ptr(self: *CPU, addr:u16) *u8 {
-        _ = self;
-        _ = addr;
-        @panic("todo");
     }
     fn read(self: *CPU, addr: u16) u8 {
         return self.bus.read(addr);
