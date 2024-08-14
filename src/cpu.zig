@@ -16,9 +16,9 @@ pub const CPU = struct {
     }
     //does one instruction, returns number of clocks
     pub fn execute(self: *CPU, opcode: u8) u8 {
-        if (opcode != 0) {
-            std.debug.print("executing {X}\n", .{opcode});
-        }
+        //if (opcode != 0) {
+        //    std.debug.print("executing {X}\n", .{opcode});
+        //}
         //https://gb-archive.github.io/salvage/decoding_gbz80_opcodes/Decoding%20Gamboy%20Z80%20Opcodes.html
         const x: u2 = @intCast((opcode & 0b11000000) >> 6);
         const y: u3 = @intCast((opcode & 0b00111000) >> 3);
