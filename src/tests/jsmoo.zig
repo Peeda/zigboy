@@ -2,6 +2,18 @@ const std = @import("std");
 const json = std.json;
 const testing = std.testing;
 
+const GbState = struct {
+    pc: u16,
+    sp: u16,
+    a: u8, b: u8, c: u8, d: u8, e: u8, f:u8, h:u8, l:u8,
+    af_: u16, bc_:u16, de_:u16, hl_:u16,
+    ram: [] const [2]u16 = ([_][2]u16 {[_]u16{0, 0}})[0..],
+};
+const TestData = struct {
+    name: []const u8,
+    initial: GbState,
+    final: GbState,
+};
 test "json_parsing" {
     const alloc = testing.allocator;
 
@@ -11,6 +23,7 @@ test "json_parsing" {
     //const json_str = try file.reader().readAllAlloc(alloc, 1e10);
     //defer alloc.free(json_str);
 
+    //NOTE: this is a modified version of a test from jsmoo
     const json_str = 
     \\   {
     \\    "name": "00 0000",
@@ -48,20 +61,20 @@ test "json_parsing" {
     \\        ]
     \\    },
     \\    "final": {
-    \\        "a": 110,
-    \\        "b": 185,
-    \\        "c": 144,
-    \\        "d": 208,
-    \\        "e": 190,
-    \\        "f": 250,
-    \\        "h": 131,
-    \\        "l": 147,
+    \\        "a": 111,
+    \\        "b": 182,
+    \\        "c": 143,
+    \\        "d": 204,
+    \\        "e": 195,
+    \\        "f": 255,
+    \\        "h": 137,
+    \\        "l": 148,
     \\        "i": 166,
     \\        "r": 17,
-    \\        "af_": 30257,
-    \\        "bc_": 17419,
-    \\        "de_": 13842,
-    \\        "hl_": 28289,
+    \\        "af_": 30251,
+    \\        "bc_": 17412,
+    \\        "de_": 13843,
+    \\        "hl_": 28284,
     \\        "ix": 35859,
     \\        "iy": 45708,
     \\        "pc": 19936,
@@ -75,8 +88,12 @@ test "json_parsing" {
     \\        "q": 0,
     \\        "ram": [
     \\            [
-    \\                19935,
-    \\                0
+    \\                19936,
+    \\                1
+    \\            ],
+    \\            [
+    \\                1234,
+    \\                5
     \\            ]
     \\        ]
     \\    },
@@ -105,17 +122,6 @@ test "json_parsing" {
     \\}
     ;
 
-    const GbState = struct {
-        pc: u16,
-        sp: u16,
-        a: u8, b: u8, c: u8, d: u8, e: u8, f:u8, h:u8, l:u8,
-        af_: u16, bc_:u16, de_:u16, hl_:u16,
-    };
-    const TestData = struct {
-        name: []const u8,
-        initial: GbState,
-        final: GbState,
-    };
     const parsed = try json.parseFromSlice(TestData, alloc, json_str, .{.ignore_unknown_fields = true});
     defer parsed.deinit();
 
@@ -129,12 +135,19 @@ test "json_parsing" {
     };
     const expected_final = GbState {
         .pc = 19936, .sp = 59438,
-        .a = 110, .b = 185, .c = 144, .d = 208,
-        .e = 190, .f = 250, .h = 131, .l = 147,
-        .af_ = 30257, .bc_ = 17419, 
-        .de_ = 13842, .hl_ = 28289,
+        .a = 111, .b = 182, .c = 143, .d = 204,
+        .e = 195, .f = 255, .h = 137, .l = 148,
+        .af_ = 30251, .bc_ = 17412, 
+        .de_ = 13843, .hl_ = 28284,
     };
-    try testing.expectEqual(expected_initial, value.initial);
-    try testing.expectEqual(expected_final, value.final);
+    inline for (std.meta.fields(GbState)) |field| {
+        if (!std.mem.eql(u8, field.name, "ram")) {
+            try testing.expectEqual(@field(expected_initial, field.name), @field(value.initial, field.name));
+            try testing.expectEqual(@field(expected_final, field.name), @field(value.final, field.name));
+        }
+    }
+    try testing.expectEqual(value.initial.ram[0], [_]u16{19935, 0});
+    try testing.expectEqual(value.final.ram[0], [_]u16{19936, 1});
+    try testing.expectEqual(value.final.ram[1], [_]u16{1234, 5});
     try testing.expectEqualStrings("00 0000", value.name);
 }
