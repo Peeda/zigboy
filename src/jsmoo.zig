@@ -1,3 +1,4 @@
+//jsmoo tests for the cpu
 const std = @import("std");
 const json = std.json;
 const testing = std.testing;
@@ -7,22 +8,51 @@ const GbState = struct {
     sp: u16,
     a: u8, b: u8, c: u8, d: u8, e: u8, f:u8, h:u8, l:u8,
     af_: u16, bc_:u16, de_:u16, hl_:u16,
-    ram: [] const [2]u16 = ([_][2]u16 {[_]u16{0, 0}})[0..],
+    ram: []const [2]u16 = ([_][2]u16 {[_]u16{0, 0}})[0..],
 };
 const TestData = struct {
     name: []const u8,
     initial: GbState,
     final: GbState,
+    //not actually reading the bus states per cycle
+    cycles: []json.Value,
 };
+test "LD B,C" {
+    const alloc = testing.allocator;
+    const file = try std.fs.cwd().openFile("tests/z80/v1/41.json", .{});
+    defer file.close();
+    const json_str = try file.reader().readAllAlloc(alloc, 1e10);
+    defer alloc.free(json_str);
+
+    const parsed = try json.parseFromSlice([]TestData, alloc, json_str, .{.ignore_unknown_fields = true});
+    defer parsed.deinit();
+    const value = parsed.value;
+    for (value) |test_data| {
+        var mem = @import("bus.zig").FlatMem {};
+        var cpu = @import("cpu.zig").CPUFlatMem {.bus = &mem};
+
+        std.debug.print("{s}\n", .{test_data.name});
+        const initial = test_data.initial;
+        cpu.regs.a = initial.a; cpu.regs.b = initial.b;
+        cpu.regs.c = initial.c; cpu.regs.d = initial.d;
+        cpu.regs.e = initial.e; cpu.regs.f = initial.f;
+        cpu.regs.h = initial.h; cpu.regs.l = initial.l;
+        std.debug.print("{} {} {}\n", .{cpu.regs.b, cpu.regs.c, cpu.regs_16().bc});
+        //try testing.expectEqual(initial.af_, cpu.regs_16().af);
+        try testing.expectEqual(initial.bc_, cpu.regs_16().bc);
+        try testing.expectEqual(initial.de_, cpu.regs_16().de);
+        try testing.expectEqual(initial.hl_, cpu.regs_16().hl);
+
+        var cycles_left = test_data.cycles.len;
+        while (cycles_left > 0) {
+            cycles_left -= cpu.step();
+        }
+        try testing.expectEqual(0, cycles_left);
+    }
+    //std.debug.print("{any}\n", .{value.len});
+}
 test "json_parsing" {
     const alloc = testing.allocator;
-
-    // Deserialize JSON
-    //const file = try std.fs.cwd().openFile("z80/v1/00.json", .{});
-    //defer file.close();
-    //const json_str = try file.reader().readAllAlloc(alloc, 1e10);
-    //defer alloc.free(json_str);
-
     //NOTE: this is a modified version of a test from jsmoo
     const json_str = 
     \\   {
@@ -150,4 +180,5 @@ test "json_parsing" {
     try testing.expectEqual(value.final.ram[0], [_]u16{19936, 1});
     try testing.expectEqual(value.final.ram[1], [_]u16{1234, 5});
     try testing.expectEqualStrings("00 0000", value.name);
+    try testing.expectEqual(4, value.cycles.len);
 }

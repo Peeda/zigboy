@@ -32,6 +32,15 @@ pub const DMA = struct {
         }
     }
 };
+pub const FlatMem = struct {
+    data: [0xFFFF] u8 = [_]u8{0} ** 0xFFFF,
+    pub fn read(self: *FlatMem, addr16: u16) u8 {
+        return self.data[@intCast(addr16)];
+    }
+    pub fn write(self: *FlatMem, addr16:u16, val:u8) void {
+        self.data[@intCast(addr16)] = val;
+    }
+};
 pub const Bus = struct {
     ppu: *PPU = undefined,
     ROM_0: [0x4000]u8 = [_]u8{0} ** 0x4000,
