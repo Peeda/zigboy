@@ -19,7 +19,7 @@ const TestData = struct {
 };
 test "LD B,C" {
     const alloc = testing.allocator;
-    const file = try std.fs.cwd().openFile("tests/z80/v1/41.json", .{});
+    const file = try std.fs.cwd().openFile("tests/z80/v1/00.json", .{});
     defer file.close();
     const json_str = try file.reader().readAllAlloc(alloc, 1e10);
     defer alloc.free(json_str);
@@ -31,21 +31,41 @@ test "LD B,C" {
         var mem = @import("bus.zig").FlatMem {};
         var cpu = @import("cpu.zig").CPUFlatMem {.bus = &mem};
 
-        std.debug.print("{s}\n", .{test_data.name});
+        //set gb values according to initial state
         const initial = test_data.initial;
-        cpu.regs.a = initial.a; cpu.regs.b = initial.b;
-        cpu.regs.c = initial.c; cpu.regs.d = initial.d;
-        cpu.regs.e = initial.e; cpu.regs.f = initial.f;
-        cpu.regs.h = initial.h; cpu.regs.l = initial.l;
-        std.debug.print("{} {} {}\n", .{cpu.regs.b, cpu.regs.c, cpu.regs_16().bc});
+        var reg_cnt:u8 = 0;
+        inline for (std.meta.fields(GbState)) |field| {
+            if (field.type == u8) {
+                @field(cpu.regs, field.name) = @field(initial, field.name);
+                reg_cnt += 1;
+            }
+        }
+        try testing.expectEqual(reg_cnt, 8);
+        cpu.sp = initial.sp;
+        cpu.pc = initial.pc;
+        for (initial.ram) |entry| {
+            cpu.bus.write(entry[0], @intCast(entry[1]));
+        }
 
         var cycles_left = test_data.cycles.len;
         while (cycles_left > 0) {
             cycles_left -= cpu.step();
         }
         try testing.expectEqual(0, cycles_left);
+
+        const final = test_data.final;
+        inline for (std.meta.fields(GbState)) |field| {
+            if (field.type == u8) {
+                try testing.expectEqual(@field(final, field.name), @field(cpu.regs, field.name));
+            }
+        }
+        try testing.expectEqual(cpu.sp, final.sp);
+        try testing.expectEqual(cpu.pc, final.pc);
+        for (initial.ram) |entry| {
+            try testing.expectEqual(entry[1], cpu.bus.read(entry[0]));
+        }
+        //TODO: maybe check to see that there aren't extra writes in arbitrary ram locations
     }
-    //std.debug.print("{any}\n", .{value.len});
 }
 test "json_parsing" {
     const alloc = testing.allocator;
