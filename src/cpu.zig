@@ -507,14 +507,14 @@ fn cpu_type(comptime T: type) type {
     };
 }
 const Registers = packed struct {
-    a: u8 = 0x01, f:u8 = 0xB0, b:u8 = 0, c:u8 = 0x13,
-    d:u8 = 0, e:u8 = 0xD8, h:u8 = 0x01, l:u8 = 0x4D,
+    l:u8 = 0x4D, h:u8 = 0x01, e:u8 = 0xD8, d:u8 = 0x00,
+    c:u8 = 0x13, b:u8 = 0x00, f:u8 = 0xB0, a:u8 = 0x01,
 };
 const Registers16 = packed struct {
-    af:u16, bc:u16, de:u16, hl:u16,
+    hl:u16, de:u16, bc:u16, af:u16,
 };
 const Flags = packed struct {
-    _pad12: u12, c: bool, h: bool, n: bool, z:bool, _pad48: u48,
+    _pad52: u52, c:bool, h:bool, n:bool, z:bool, _pad8: u8,
 };
 const testing = std.testing;
 test "casting" {
@@ -533,6 +533,22 @@ test "casting" {
     cpu.regs.f = 0b01001101;
     try testing.expectEqual(false, cpu.flags().z); try testing.expectEqual(true, cpu.flags().n);
     try testing.expectEqual(false, cpu.flags().h); try testing.expectEqual(false, cpu.flags().c);
+}
+test "16 bit registers" {
+    var bus = @import("bus.zig").Bus {};
+    var cpu = CPU {.bus = &bus};
+    cpu.regs.a = 0b11010010;
+    cpu.regs.f = 0b01001010;
+    try testing.expectEqual(cpu.regs_16().af, 0b1101001001001010);
+    cpu.regs.b = 0b10010100;
+    cpu.regs.c = 0b00011000;
+    try testing.expectEqual(cpu.regs_16().bc, 0b1001010000011000);
+    cpu.regs.d = 0b11100100;
+    cpu.regs.e = 0b00101000;
+    try testing.expectEqual(cpu.regs_16().de, 0b1110010000101000);
+    cpu.regs.h = 0b11000010;
+    cpu.regs.l = 0b10000100;
+    try testing.expectEqual(cpu.regs_16().hl, 0b1100001010000100);
 }
 test "load" {
     var bus = @import("bus.zig").Bus {};

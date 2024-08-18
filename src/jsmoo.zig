@@ -38,10 +38,6 @@ test "LD B,C" {
         cpu.regs.e = initial.e; cpu.regs.f = initial.f;
         cpu.regs.h = initial.h; cpu.regs.l = initial.l;
         std.debug.print("{} {} {}\n", .{cpu.regs.b, cpu.regs.c, cpu.regs_16().bc});
-        //try testing.expectEqual(initial.af_, cpu.regs_16().af);
-        try testing.expectEqual(initial.bc_, cpu.regs_16().bc);
-        try testing.expectEqual(initial.de_, cpu.regs_16().de);
-        try testing.expectEqual(initial.hl_, cpu.regs_16().hl);
 
         var cycles_left = test_data.cycles.len;
         while (cycles_left > 0) {
