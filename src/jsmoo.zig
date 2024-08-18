@@ -7,7 +7,6 @@ const GbState = struct {
     pc: u16,
     sp: u16,
     a: u8, b: u8, c: u8, d: u8, e: u8, f:u8, h:u8, l:u8,
-    af_: u16, bc_:u16, de_:u16, hl_:u16,
     ram: []const [2]u16 = ([_][2]u16 {[_]u16{0, 0}})[0..],
 };
 const TestData = struct {
@@ -17,17 +16,9 @@ const TestData = struct {
     //not actually reading the bus states per cycle
     cycles: []json.Value,
 };
-test "LD B,C" {
-    const alloc = testing.allocator;
-    const file = try std.fs.cwd().openFile("tests/z80/v1/00.json", .{});
-    defer file.close();
-    const json_str = try file.reader().readAllAlloc(alloc, 1e10);
-    defer alloc.free(json_str);
-
-    const parsed = try json.parseFromSlice([]TestData, alloc, json_str, .{.ignore_unknown_fields = true});
-    defer parsed.deinit();
-    const value = parsed.value;
-    for (value) |test_data| {
+fn run_test(json_value: []TestData) !void {
+    for (json_value) |test_data| {
+        std.debug.print("{s}\n", .{test_data.name});
         var mem = @import("bus.zig").FlatMem {};
         var cpu = @import("cpu.zig").CPUFlatMem {.bus = &mem};
 
@@ -49,7 +40,9 @@ test "LD B,C" {
 
         var cycles_left = test_data.cycles.len;
         while (cycles_left > 0) {
-            cycles_left -= cpu.step();
+            const t_cycles = cpu.step();
+            try testing.expect(t_cycles % 4 == 0);
+            cycles_left -= t_cycles / 4;
         }
         try testing.expectEqual(0, cycles_left);
 
@@ -61,10 +54,26 @@ test "LD B,C" {
         }
         try testing.expectEqual(cpu.sp, final.sp);
         try testing.expectEqual(cpu.pc, final.pc);
-        for (initial.ram) |entry| {
+        for (final.ram) |entry| {
             try testing.expectEqual(entry[1], cpu.bus.read(entry[0]));
         }
         //TODO: maybe check to see that there aren't extra writes in arbitrary ram locations
+    }
+}
+test "jsmoo cb opcodes" {
+    for (0..0xFF+1) |opcode| {
+        const alloc = testing.allocator;
+        const file_name = try std.fmt.allocPrint(alloc, "tests/sm83/v1/cb {x:0>2}.json", .{opcode});
+        defer alloc.free(file_name);
+        const file = try std.fs.cwd().openFile(file_name, .{});
+        defer file.close();
+        const json_str = try file.reader().readAllAlloc(alloc, 1e10);
+        defer alloc.free(json_str);
+
+        const parsed = try json.parseFromSlice([]TestData, alloc, json_str, .{.ignore_unknown_fields = true});
+        defer parsed.deinit();
+        const json_data = parsed.value;
+        try run_test(json_data);
     }
 }
 test "json_parsing" {
@@ -176,15 +185,11 @@ test "json_parsing" {
         .pc = 19935, .sp = 59438,
         .a = 110, .b = 185, .c = 144, .d = 208,
         .e = 190, .f = 250, .h = 131, .l = 147,
-        .af_ = 30257, .bc_ = 17419, 
-        .de_ = 13842, .hl_ = 28289,
     };
     const expected_final = GbState {
         .pc = 19936, .sp = 59438,
         .a = 111, .b = 182, .c = 143, .d = 204,
         .e = 195, .f = 255, .h = 137, .l = 148,
-        .af_ = 30251, .bc_ = 17412, 
-        .de_ = 13843, .hl_ = 28284,
     };
     inline for (std.meta.fields(GbState)) |field| {
         if (!std.mem.eql(u8, field.name, "ram")) {

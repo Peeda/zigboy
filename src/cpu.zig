@@ -30,6 +30,7 @@ fn cpu_type(comptime T: type) type {
             const q: u1 = @intCast(y & 1);
             const p: u2 = @intCast(y >> 1);
             var use_alt_clock = false;
+            var cb_opcode:u8 = 0;
             switch (x) {
                 0 => switch (z) {
                     0 => switch (y) {
@@ -235,12 +236,9 @@ fn cpu_type(comptime T: type) type {
                         },
                         3 => {
                             switch (y) {
-                                //TODO: make sure I'm using cb x y z not the normal ones
-                                //maybe move this into a function, too much indentation
-                                //also shared flag behavior between bit ops
                                 0 => self.pc = self.consume_16(),
                                 1 => {
-                                    const cb_opcode = self.consume_byte();
+                                    cb_opcode = self.consume_byte();
                                     const cb_x: u2 = @intCast((cb_opcode & 0b11000000) >> 6);
                                     const cb_y: u3 = @intCast((cb_opcode & 0b00111000) >> 3);
                                     const cb_z: u3 = @intCast((cb_opcode & 0b00000111));
@@ -313,12 +311,14 @@ fn cpu_type(comptime T: type) type {
                                                     const bottom_half = val & 0xf;
                                                     accum |= top_half >> 4;
                                                     accum |= bottom_half << 4;
+                                                    self.write_table_r8(cb_z, accum);
+
                                                     self.set_flags(self.read_table_r8(cb_z) == 0, false, false, false);
                                                 },
                                                 7 => {
                                                     //srl, logical shift
                                                     self.flags().c = (val & 1) > 0;
-                                                    self.write(cb_z, val >> 1);
+                                                    self.write_table_r8(cb_z, val >> 1);
                                                     self.flags().z = self.read_table_r8(cb_z) == 0;
                                                     self.flags().n = false;
                                                     self.flags().h = false;
@@ -327,7 +327,7 @@ fn cpu_type(comptime T: type) type {
                                         },
                                         1 => {
                                             //test bit y of reg z
-                                            self.flags().z = (val & (@as(u8,1) << cb_y)) > 0;
+                                            self.flags().z = (val & (@as(u8,1) << cb_y)) == 0;
                                             self.flags().n = false;
                                             self.flags().h = true;
                                         },
@@ -374,7 +374,13 @@ fn cpu_type(comptime T: type) type {
             }
             //don't use the alt table if this opcode doesn't have an alternative clock len
             std.debug.assert(!(use_alt_clock and ALT_CLOCK[@intCast(opcode)] == 0));
-            return if (use_alt_clock) ALT_CLOCK[@intCast(opcode)] else CLOCK[@intCast(opcode)];
+            if (opcode == 0xCB) {
+                return CB_CLOCK[@intCast(cb_opcode)];
+            } else if (use_alt_clock) {
+                return ALT_CLOCK[@intCast(opcode)];
+            } else {
+                return CLOCK[@intCast(opcode)];
+            }
         }
         fn read_table_r8(self: *@This(), id: u3) u8 {
             return switch (id) {
@@ -612,4 +618,22 @@ pub const ALT_CLOCK = [_]u8 {
 20,  0, 16,  0, 24,  0,  0,  0, 20,  0, 16,  0, 24,  0,  0,  0,
  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+};
+pub const CB_CLOCK = [_]u8 {
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 12,  8,  8,  8,  8,  8,  8,  8, 12,  8, 
+ 8,  8,  8,  8,  8,  8, 12,  8,  8,  8,  8,  8,  8,  8, 12,  8, 
+ 8,  8,  8,  8,  8,  8, 12,  8,  8,  8,  8,  8,  8,  8, 12,  8, 
+ 8,  8,  8,  8,  8,  8, 12,  8,  8,  8,  8,  8,  8,  8, 12,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
+ 8,  8,  8,  8,  8,  8, 16,  8,  8,  8,  8,  8,  8,  8, 16,  8, 
 };

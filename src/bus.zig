@@ -33,7 +33,7 @@ pub const DMA = struct {
     }
 };
 pub const FlatMem = struct {
-    data: [0xFFFF] u8 = [_]u8{0} ** 0xFFFF,
+    data: [0xFFFF + 1] u8 = [_]u8{0} ** (0xFFFF + 1),
     pub fn read(self: *FlatMem, addr16: u16) u8 {
         return self.data[@intCast(addr16)];
     }
