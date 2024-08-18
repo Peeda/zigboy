@@ -1,5 +1,6 @@
 //TODO: error handling with illegal opcodes
 //TODO: logging
+//TODO: split decode step and execute step
 const std = @import("std");
 pub const CPU = cpu_type(@import("bus.zig").Bus);
 pub const CPUFlatMem = cpu_type(@import("bus.zig").FlatMem);
@@ -38,7 +39,7 @@ fn cpu_type(comptime T: type) type {
                         1 => {
                             //write sp to memory
                             const addr = self.consume_16();
-                            self.write(addr, @as(u8, @intCast(self.sp & 0x0f)));
+                            self.write(addr, @as(u8, @intCast(self.sp & 0xff)));
                             self.write(addr + 1, @as(u8, @intCast(self.sp >> 8)));
                         },
                         2 => @panic("TODO, stop instruction"),
@@ -115,6 +116,7 @@ fn cpu_type(comptime T: type) type {
                         self.flags().z = self.read_table_r8(y) == 1;
                         self.flags().n = true;
                         self.flags().h = (self.read_table_r8(y) & 0x0f) == 0;
+                        self.write_table_r8(y, self.read_table_r8(y) -% 1);
                     },
                     6 => self.write_table_r8(y, self.consume_byte()),
                     7 => {
@@ -148,8 +150,8 @@ fn cpu_type(comptime T: type) type {
                             4 => @panic("todo, DAA"),
                             5 => {
                                 self.regs.a = ~self.regs.a;
-                                self.flags().n = false;
-                                self.flags().h = false;
+                                self.flags().n = true;
+                                self.flags().h = true;
                             },
                             6 => {
                                 self.flags().n = false;
@@ -184,10 +186,10 @@ fn cpu_type(comptime T: type) type {
                                     const disp = self.consume_byte();
                                     self.flags().z = false;
                                     self.flags().n = false;
+                                    const low_byte:u8 = @intCast(self.sp & 0xff);
+                                    self.flags().h = (low_byte & 0xf) + (disp & 0xf) > 0xf;
+                                    self.flags().c = low_byte +% disp < low_byte;
                                     if (disp < 128) {
-                                        const low_byte:u8 = @intCast(self.sp >> 8);
-                                        self.flags().h = (low_byte & 0xf) + (disp & 0xf) > 0xf;
-                                        self.flags().c = low_byte +% disp < low_byte;
                                         self.sp +%= disp;
                                     } else {
                                         self.sp -%= (255 - disp) +% 1;
@@ -198,13 +200,13 @@ fn cpu_type(comptime T: type) type {
                                     const disp = self.consume_byte();
                                     self.flags().z = false;
                                     self.flags().n = false;
+                                    const low_byte:u8 = @intCast(self.sp & 0xff);
+                                    self.flags().h = (low_byte & 0xf) + (disp & 0xf) > 0xf;
+                                    self.flags().c = low_byte +% disp < low_byte;
                                     if (disp < 128) {
-                                        const low_byte:u8 = @intCast(self.sp >> 8);
-                                        self.flags().h = (low_byte & 0xf) + (disp & 0xf) > 0xf;
-                                        self.flags().c = low_byte +% disp < low_byte;
                                         self.regs_16().hl = self.sp +% disp;
                                     } else {
-                                        self.regs_16().hl = self.sp -% (255 - disp) +% 1;
+                                        self.regs_16().hl = self.sp -% ((255 - disp) +% 1);
                                     }
                                 },
                             }
@@ -465,7 +467,7 @@ fn cpu_type(comptime T: type) type {
             self.sp -%= 1;
             self.write(self.sp, @intCast(val >> 8));
             self.sp -%= 1;
-            self.write(self.sp, @intCast(val & 0xf));
+            self.write(self.sp, @intCast(val & 0xff));
         }
         fn pop_16(self: *@This()) u16 {
             const low_byte:u16 = @intCast(self.read(self.sp));
@@ -479,6 +481,8 @@ fn cpu_type(comptime T: type) type {
             self.pc = addr;
         }
         fn alu_8(self: *@This(), op_id: u3, arg_original: u8) void {
+            //std.debug.print("{} {}\n", .{self.regs.a, arg_original});
+            //std.debug.print("{}\n", .{self.flags().c});
             //8 bit arithmetic between registers
             const AluOp = enum {
                 ADD, ADC, SUB, SBC, AND, XOR, OR, CP,
@@ -498,14 +502,20 @@ fn cpu_type(comptime T: type) type {
                 .SUB, .SBC, .CP  => true,
                 .ADD, .ADC, .AND, .XOR, .OR => false,
             };
+            const carry_val:u8 = if (self.flags().c) 1 else 0;
             self.flags().h = switch (op) {
-                .ADD, .ADC => (self.regs.a & 0xf) + (arg & 0xf) > 0xf,
-                .SUB, .SBC, .CP => (self.regs.a & 0xf) < (arg & 0xf),
-                .AND, .OR, .XOR => false,
+                .ADD => (self.regs.a & 0xf) + (arg & 0xf) > 0xf,
+                .ADC => (self.regs.a & 0xf) + (arg_original & 0xf) + carry_val > 0xf,
+                .SUB, .CP => (self.regs.a & 0xf) < (arg & 0xf),
+                .SBC => (self.regs.a & 0xf) < (arg_original & 0xf) + carry_val,
+                .AND => true,
+                .OR, .XOR => false,
             };
             self.flags().c = switch (op) {
-                .ADD, .ADC => result < self.regs.a,
-                .SUB, .SBC, .CP => result > self.regs.a,
+                .ADD => result < self.regs.a,
+                .ADC => if (self.flags().c) result <= self.regs.a else result < self.regs.a,
+                .SUB, .CP => result > self.regs.a,
+                .SBC => if (self.flags().c) result >= self.regs.a else result > self.regs.a,
                 .AND, .OR, .XOR => false,
             };
             if (op != .CP) self.regs.a = result;

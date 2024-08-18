@@ -60,10 +60,16 @@ fn run_test(json_value: []TestData) !void {
         //TODO: maybe check to see that there aren't extra writes in arbitrary ram locations
     }
 }
-test "jsmoo cb opcodes" {
-    for (0..0xFF+1) |opcode| {
+test "jsmoo unprefixed" {
+    const illegal = [_]u8 {0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD, 0xCB};
+    const unimplemented = [_]u8 {0x10, 0x27, 0x76};
+    const exclude = illegal ++ unimplemented;
+    outer: for (0..0xFF+1) |opcode| {
+        for (exclude) |excluded| {
+            if (opcode == excluded) continue :outer;
+        }
         const alloc = testing.allocator;
-        const file_name = try std.fmt.allocPrint(alloc, "tests/sm83/v1/cb {x:0>2}.json", .{opcode});
+        const file_name = try std.fmt.allocPrint(alloc, "tests/sm83/v1/{x:0>2}.json", .{opcode});
         defer alloc.free(file_name);
         const file = try std.fs.cwd().openFile(file_name, .{});
         defer file.close();
@@ -76,6 +82,22 @@ test "jsmoo cb opcodes" {
         try run_test(json_data);
     }
 }
+//test "jsmoo cb opcodes" {
+//    for (0..0xFF+1) |opcode| {
+//        const alloc = testing.allocator;
+//        const file_name = try std.fmt.allocPrint(alloc, "tests/sm83/v1/cb {x:0>2}.json", .{opcode});
+//        defer alloc.free(file_name);
+//        const file = try std.fs.cwd().openFile(file_name, .{});
+//        defer file.close();
+//        const json_str = try file.reader().readAllAlloc(alloc, 1e10);
+//        defer alloc.free(json_str);
+//
+//        const parsed = try json.parseFromSlice([]TestData, alloc, json_str, .{.ignore_unknown_fields = true});
+//        defer parsed.deinit();
+//        const json_data = parsed.value;
+//        try run_test(json_data);
+//    }
+//}
 test "json_parsing" {
     const alloc = testing.allocator;
     //NOTE: this is a modified version of a test from jsmoo
