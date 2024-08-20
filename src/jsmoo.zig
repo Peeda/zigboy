@@ -18,7 +18,7 @@ const TestData = struct {
 };
 fn run_test(json_value: []TestData) !void {
     for (json_value) |test_data| {
-        std.debug.print("{s}\n", .{test_data.name});
+        //std.debug.print("{s}\n", .{test_data.name});
         var mem = @import("bus.zig").FlatMem {};
         var cpu = @import("cpu.zig").CPUFlatMem {.bus = &mem};
 
@@ -60,11 +60,11 @@ fn run_test(json_value: []TestData) !void {
         //TODO: maybe check to see that there aren't extra writes in arbitrary ram locations
     }
 }
-test "jsmoo unprefixed" {
+test "jsmoo" {
     const illegal = [_]u8 {0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD, 0xCB};
     const unimplemented = [_]u8 {0x10, 0x27, 0x76};
     const exclude = illegal ++ unimplemented;
-    outer: for (0..0xFF+1) |opcode| {
+    outer: for (0x00..0xFF+1) |opcode| {
         for (exclude) |excluded| {
             if (opcode == excluded) continue :outer;
         }

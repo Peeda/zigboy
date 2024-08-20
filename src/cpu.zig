@@ -213,7 +213,7 @@ fn cpu_type(comptime T: type) type {
                         },
                         1 => {
                             switch (q) {
-                                0 => self.table_rp2(p).* = self.pop_16(),
+                                0 => {self.table_rp2(p).* = self.pop_16(); self.regs.f &= 0xf0;},
                                 1 => switch (p) {
                                     0 => self.pc = self.pop_16(),
                                     1 => {self.pc = self.pop_16(); self.ime = true; },
