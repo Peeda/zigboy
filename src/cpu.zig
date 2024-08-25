@@ -42,7 +42,10 @@ fn cpu_type(comptime T: type) type {
                             self.write(addr, @as(u8, @intCast(self.sp & 0xff)));
                             self.write(addr + 1, @as(u8, @intCast(self.sp >> 8)));
                         },
-                        2 => @panic("TODO, stop instruction"),
+                        2 => {
+                            //TODO: stop
+                            self.pc +%= 1;
+                        },
                         3 => {
                             //relative jump
                             const disp = self.consume_byte();
@@ -147,7 +150,23 @@ fn cpu_type(comptime T: type) type {
                                 self.set_flags(false, false, false, bottom_set);
                                 if (prev_c) self.regs.a |= (1 << 7);
                             },
-                            4 => @panic("todo, DAA"),
+                            4 => {
+                                var offset:u8 = 0;
+                                if (self.flags().h or (!self.flags().n and self.regs.a & 0xF > 0x9)) {
+                                    offset |= 0x6;
+                                }
+                                if (self.flags().c or (!self.flags().n and self.regs.a > 0x99)) {
+                                    offset |= 0x60;
+                                    self.flags().c = true;
+                                }
+                                if (self.flags().n) {
+                                    self.regs.a -%= offset;
+                                } else {
+                                    self.regs.a +%= offset;
+                                }
+                                self.flags().z = self.regs.a == 0;
+                                self.flags().h = false;
+                            },
                             5 => {
                                 self.regs.a = ~self.regs.a;
                                 self.flags().n = true;
@@ -168,7 +187,7 @@ fn cpu_type(comptime T: type) type {
                 },
                 1 => {
                     if (y == 6 and z == 6) {
-                        @panic("halt instruction todo");
+                        //@panic("halt instruction todo");
                     } else {
                         self.write_table_r8(y, self.read_table_r8(z));
                     }

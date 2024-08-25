@@ -52,8 +52,8 @@ fn run_test(json_value: []TestData) !void {
                 try testing.expectEqual(@field(final, field.name), @field(cpu.regs, field.name));
             }
         }
-        try testing.expectEqual(cpu.sp, final.sp);
-        try testing.expectEqual(cpu.pc, final.pc);
+        try testing.expectEqual(final.sp, cpu.sp);
+        try testing.expectEqual(final.pc, cpu.pc);
         for (final.ram) |entry| {
             try testing.expectEqual(entry[1], cpu.bus.read(entry[0]));
         }
@@ -62,7 +62,7 @@ fn run_test(json_value: []TestData) !void {
 }
 test "jsmoo" {
     const illegal = [_]u8 {0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD, 0xCB};
-    const unimplemented = [_]u8 {0x10, 0x27, 0x76};
+    const unimplemented = [_]u8 {0x10, 0x76};
     const exclude = illegal ++ unimplemented;
     outer: for (0x00..0xFF+1) |opcode| {
         for (exclude) |excluded| {
