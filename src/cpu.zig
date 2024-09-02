@@ -47,6 +47,11 @@ fn cpu_type(comptime T: type) type {
                     self.halted = false;
                 }
             }
+            //const stdout = std.io.getStdOut().writer();
+            //_ = stdout.print("A:{X:0>2} F:{X:0>2} B:{X:0>2} C:{X:0>2} D:{X:0>2} E:{X:0>2} H:{X:0>2} L:{X:0>2} SP:{X:0>2} PC:{X:0>2} PCMEM:{X:0>2},{X:0>2},{X:0>2},{X:0>2}\n",
+            //    .{self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e,
+            //    self.regs.h, self.regs.l, self.sp, self.pc, self.bus.read(self.pc), self.bus.read(self.pc + 1),
+            //    self.bus.read(self.pc + 2), self.bus.read(self.pc + 3)}) catch {};
             return clocks_taken;
         }
         //does one instruction, returns number of clocks

@@ -78,7 +78,8 @@ pub const Bus = struct {
             0xFE00...0xFE9F => self.OAM[addr - 0xFE00],
             //TODO: what to do with forbidden memory
             0xFEA0...0xFEFF => 0,
-            0xFF00...0xFF7F => self.IO[addr - 0xFF00],
+            //0xFF00...0xFF7F => self.IO[addr - 0xFF00],
+            0xFF00...0xFF7F => if (addr == 0xff44) 0x90 else self.IO[addr - 0xFF00],
             0xFF80...0xFFFE => self.HRAM[addr - 0xFF80],
             0xFFFF => self.IE,
             else => @panic("what."),
@@ -103,7 +104,7 @@ pub const Bus = struct {
             0xFF00...0xFF7F => {
                 if (addr == 0xFF46) {
                     //DMA
-
+                    std.debug.print("dma requested.\n", .{});
                 }
                 self.IO[addr - 0xFF00] = val;
             },
