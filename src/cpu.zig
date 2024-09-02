@@ -11,12 +11,42 @@ fn cpu_type(comptime T: type) type {
         bus: *T,
         regs: Registers = Registers {},
         sp:u16 = 0xFFFE, pc:u16 = 0x0100, ime:bool = false,
+        halted: bool = false, halt_bug: bool = false,
         //was an ie operation executed last step
         ie_next:bool = false,
         pub fn step(self: *@This()) u8 {
             var clocks_taken:u8 = 0;
-            clocks_taken += self.execute(self.consume_byte());
+            if (!self.halted) {
+                clocks_taken += self.execute(self.consume_byte());
+                if (self.halt_bug) {
+                    self.pc -%= 1;
+                    self.halt_bug = false;
+                }
+            } else {
+                //advance clocks when halted
+                clocks_taken += 4;
+            }
             //handle interrupts
+            const inter_flags = self.bus.read(0xFF0F);
+            const inter_enable = self.bus.read(0xFFFF);
+            if (self.ime) {
+                const interrupt_addrs = [_]u16{0x40, 0x48, 0x50, 0x58, 0x60};
+                for (0..5) |i| {
+                    if ((inter_flags & inter_enable) & (@as(u8, 1) << @intCast(i)) > 0) {
+                        self.halted = false;
+                        self.ime = false;
+                        self.bus.write(0xFF0F, inter_flags & ~(@as(u8, 1) << @intCast(i)));
+                        self.call(interrupt_addrs[@intCast(i)]);
+                        clocks_taken += 20;
+                        break;
+                    }
+                }
+            //ime=false halt case, halt bug handled in opcode execution
+            } else if (self.halted) {
+                if (inter_flags & inter_enable > 0) {
+                    self.halted = false;
+                }
+            }
             return clocks_taken;
         }
         //does one instruction, returns number of clocks
@@ -187,7 +217,13 @@ fn cpu_type(comptime T: type) type {
                 },
                 1 => {
                     if (y == 6 and z == 6) {
-                        //@panic("halt instruction todo");
+                        self.halted = true;
+                        const inter_flags = self.bus.read(0xFF0F);
+                        const inter_enable = self.bus.read(0xFFFF);
+                        if (inter_flags & inter_enable > 0) {
+                            self.halted = false;
+                            self.halt_bug = true;
+                        }
                     } else {
                         self.write_table_r8(y, self.read_table_r8(z));
                     }

@@ -62,7 +62,7 @@ fn run_test(json_value: []TestData) !void {
 }
 test "jsmoo" {
     const illegal = [_]u8 {0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD, 0xCB};
-    const unimplemented = [_]u8 {0x10, 0x76};
+    const unimplemented = [_]u8 {0x10};
     const exclude = illegal ++ unimplemented;
     outer: for (0x00..0xFF+1) |opcode| {
         for (exclude) |excluded| {

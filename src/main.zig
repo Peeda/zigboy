@@ -61,11 +61,7 @@ pub fn main() void {
     var cpu = CPU {.bus = &bus};
     bus.ppu = &ppu;
 
-    const ram = @embedFile("tests/zelda.dmp");
-    for (0..0xFFFF) |i| {
-        bus.write(@intCast(i), ram[i]);
-    }
-    const rom = @embedFile("tests/dmg-acid2.gb");
+    const rom = @embedFile("tests/cpu_instrs.gb");
     bus.load(rom);
     ppu.update_debug_tile_data();
     ppu.update_debug_tilemap(TileMapType.Background);
